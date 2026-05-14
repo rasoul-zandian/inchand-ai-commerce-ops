@@ -1,0 +1,63 @@
+Metadata-Version: 2.4
+Name: inchand-ai
+Version: 0.1.0
+Summary: Inchand AI Commerce Operations Copilot (MVP skeleton)
+Author: Inchand
+License: Proprietary
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi>=0.115
+Requires-Dist: langchain-core>=0.3
+Requires-Dist: langgraph>=0.2
+Requires-Dist: pydantic>=2.6
+Requires-Dist: sqlalchemy>=2.0
+Requires-Dist: uvicorn[standard]>=0.30
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0; extra == "dev"
+Requires-Dist: pytest-asyncio>=0.24; extra == "dev"
+
+# Inchand AI — Commerce Operations Copilot (MVP)
+
+Production-oriented skeleton for the **Vendor Ticket Assistant** workflow: a controlled LangGraph pipeline with shared state, mock tools first, and no destructive or outbound actions in early phases.
+
+This repository is built **step by step**. Each step adds only the agreed files; graph code, nodes, tools, and the FastAPI application come in later steps.
+
+## Tech stack (target)
+
+- Python 3.11+
+- LangGraph / LangChain
+- Pydantic v2
+- FastAPI
+- pytest
+
+Planned integrations (not wired in the skeleton steps yet): LangSmith, PostgreSQL, pgvector.
+
+## Layout
+
+- `app/graph`, `app/nodes`, `app/tools` — workflow and orchestration (added incrementally).
+- `app/state`, `app/schemas` — shared state and validation.
+- `app/services`, `app/prompts`, `app/rag`, `app/memory` — services and retrieval/memory placeholders.
+- `app/api` — HTTP surface (later).
+- `tests` — pytest suite.
+
+## Local setup
+
+```bash
+cd inchand_ai
+python3.11 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+cp .env.example .env
+```
+
+Run tests (when tests exist):
+
+```bash
+pytest
+```
+
+## Principles (MVP)
+
+- Mock tools and fixtures before real integrations.
+- No real LLM, database, or RAG until explicitly introduced.
+- No ticket reply sending or other destructive side effects in the MVP path.
