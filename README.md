@@ -12,13 +12,13 @@ This repository is built **step by step**. Each step adds only the agreed files;
 - FastAPI
 - pytest
 
-Planned integrations (not wired in the skeleton steps yet): LangSmith, PostgreSQL, pgvector.
+**Default runtime:** mock LLM/embeddings and in-memory RAG (no Postgres in **`make ci`**). **Opt-in (manual/staging):** LangSmith tracing, OpenAI LLM/embeddings, and pgvector retrieval via **`RAG_PROFILE=semantic_pgvector`** or **`semantic_pgvector_16`**—validated with **`make pg-eval`** / **`make pg-compare`**, not enabled in CI.
 
 ## Layout
 
 - `app/graph`, `app/nodes`, `app/tools` — workflow and orchestration (added incrementally).
 - `app/state`, `app/schemas` — shared state and validation.
-- `app/services`, `app/prompts`, `app/rag`, `app/memory` — services and retrieval/memory placeholders.
+- `app/services`, `app/prompts`, `app/rag`, `app/memory` — services and retrieval (mock/in-memory default; opt-in pgvector profiles).
 - `app/api` — HTTP surface (later).
 - `tests` — pytest suite.
 
@@ -36,6 +36,104 @@ Run tests (when tests exist):
 
 ```bash
 pytest
+```
+
+## CI
+
+GitHub Actions runs:
+
+- `ruff check app tests scripts` (lint)
+- `ruff format --check app tests scripts` (formatting)
+- `pytest` (with mock providers only: no OpenAI, no LangSmith secrets, no DB)
+- `PYTHONPATH=. python3.11 scripts/check_corpus_integrity.py` to validate:
+  - corpus SHA-256 integrity inventory + committed lockfile
+  - manifest/eval consistency
+- `PYTHONPATH=. python3.11 scripts/check_corpus_lockfile_fresh.py` to ensure `corpus.lock.json` is not stale
+
+Corpus governance note: any change to `corpus/vendor_ticket/` must be accompanied by an intentional regeneration of `corpus/vendor_ticket/corpus.lock.json`.
+
+## Developer Commands
+
+From the project root, **`make ci`** runs the same offline checks as GitHub Actions (mock providers only—no OpenAI, no LangSmith secrets, no database):
+
+```bash
+make install       # pip install -e ".[dev]"
+make lint          # ruff check app tests scripts
+make format        # ruff format app tests scripts (writes changes)
+make format-check  # ruff format --check (CI-style, no writes)
+make test          # pytest with mock LLM/embeddings/RAG
+make corpus-check  # integrity inventory + corpus.lock.json + manifest/eval consistency
+make lockfile      # regenerate corpus/vendor_ticket/corpus.lock.json (after intentional edits)
+make lockfile-check # verify lockfile is fresh (does not rewrite the file)
+make config-check  # validate local .env / AppSettings (see Config validation)
+make ci            # lint, format-check, test, corpus-check, lockfile-check
+```
+
+**Manual smoke tests** (not part of **`make ci`**; require a **running local FastAPI** server and your current shell environment—**no** **`.env`** auto-sourcing):
+
+```bash
+make smoke-semantic   # semantic RAG path; scripts run config preflight first
+make smoke-openai     # OpenAI draft path; requires OPENAI_API_KEY in environment
+```
+
+- **`make smoke-semantic`**: expects **`RAG_STRATEGY=semantic`** or a compatible profile (e.g. **`RAG_PROFILE=semantic_local`**). Mock embeddings are fine; no OpenAI key required for retrieval validation.
+- **`make smoke-openai`**: requires **`OPENAI_API_KEY`** and typically **`LLM_PROVIDER=openai`** when exercising the real OpenAI adapter. Secrets are never printed by the smoke scripts.
+
+Run **`make config-check`** before **`uvicorn`**. Export env vars with **`set -a && source .env && set +a`** in the same shell as the server and smoke command.
+
+**When to regenerate the lockfile:** after you intentionally change corpus bodies, `manifest.json`, or `eval_cases.json`. Recommended flow:
+
+1. Edit corpus files under `corpus/vendor_ticket/`
+2. `make corpus-check` (confirm manifest/eval consistency and current inventory)
+3. `make lockfile` (writes new SHA-256 hashes to `corpus.lock.json`)
+4. Review the diff (corpus + lockfile together)
+5. Commit both the corpus changes and the updated lockfile
+
+If **`make lockfile-check`** or CI fails with a stale lockfile message, run **`make lockfile`**, review the diff, and commit the updated `corpus.lock.json` intentionally.
+
+### Config validation
+
+**`make config-check`** validates your **local** `.env` / environment by loading **`AppSettings`** (no network, no LangSmith, no workflow run, no FastAPI startup). It prints only **safe operational fields**—never API keys or other secrets. Use it before **`uvicorn`**, manual workflow runs, and the [smoke tests](#manual-smoke-test-semantic-rag-vendor-ticket) below. **`make ci`** does **not** read your local `.env`; it injects deterministic mock env vars—**`config-check`** is for developer-machine validation only.
+
+```bash
+make config-check
+```
+
+Example success output:
+
+```text
+config check: passed
+  environment=development
+  llm_provider=mock
+  embedding_provider=mock
+  rag_profile=semantic_local
+  rag_strategy=mock
+  rag_top_k=5
+```
+
+Example failure (invalid profile):
+
+```text
+config check: failed
+  rag_profile: Invalid RAG_PROFILE 'pinecone'; allowed values: mock, policy_only, ...
+```
+
+**`make ci`** vs **`make config-check`:**
+
+| Command | Purpose |
+|---------|---------|
+| **`make ci`** | Deterministic offline CI checks (mock env vars injected; lint, tests, corpus governance) |
+| **`make config-check`** | Validate **your** local runtime configuration as loaded from `.env` |
+
+Equivalent manual commands:
+
+```bash
+ruff check app tests scripts
+ruff format --check app tests scripts
+pytest
+PYTHONPATH=. python3.11 scripts/check_corpus_integrity.py
+PYTHONPATH=. python3.11 scripts/check_corpus_lockfile_fresh.py
+PYTHONPATH=. python3.11 scripts/regenerate_corpus_lockfile.py
 ```
 
 ## LangSmith Observability
@@ -102,9 +200,863 @@ The vendor ticket node calls `app.llm.generate_text` only; provider choice comes
 
 - `LLM_PROVIDER=mock` keeps deterministic Persian placeholder output for local development and CI.
 
+## Embeddings Foundation
+
+Text **embeddings** back **semantic RAG** (similarity search over policy and ticket snippets). The default graph path still uses **mock** catalog retrieval; **`RAG_STRATEGY=semantic`** and pgvector profiles call **`generate_embedding`** in **`retrieve_context`**.
+
+- **Default:** `EMBEDDING_PROVIDER=mock` and `EMBEDDING_MODEL=mock-embedding-small` yield a **deterministic 16-D vector** with no network I/O (see `app/embeddings/factory.py`).
+- **OpenAI adapter:** when `provider="openai"`, the factory calls `client.embeddings.create` and requires **`OPENAI_API_KEY`** in the environment; use this **manually** only when you are ready to pay for tokens and have approved data handling.
+- **Pgvector (opt-in):** Postgres + **`PgVectorStore`** for **`semantic_pgvector`** / **`semantic_pgvector_16`** profiles—staging/manual only, not CI. Pinecone, Qdrant, and hosted vector SaaS are **not** included.
+- **Tests** exercise only the **mock** path and the **missing-key** guard for OpenAI; they **do not** call the OpenAI network.
+
+Configure via `AppSettings` / env: **`EMBEDDING_PROVIDER`**, **`EMBEDDING_MODEL`** (see `.env.example`).
+
+## Offline RAG Ingestion Foundation
+
+The **`app/rag/ingestion.py`** module prepares **embedding-ready** `RAGDocument` rows from **approved / anonymized** support artifacts (`VendorTicketRecord`, `VendorTicketEvaluationExample`) and offers **character-based chunking** for long texts.
+
+- **Purpose:** turn offline exports into a normalized document shape before any vector store or embedding batch job runs.
+- **Chunking:** sliding character windows (`chunk_text`, `rag_document_to_chunks`) run **before** embeddings and **before** pgvector/Pinecone/Qdrant; chunk metadata records `parent_document_id`, `chunk_index`, and `chunk_count`.
+- **Not here:** embedding vectors are **not** produced in this module (use `app/embeddings` later); **no database writes**; **no automatic ingestion** of raw production dumps—operators must anonymize and approve sources first.
+- **Safety:** processing is **local, deterministic, and pure**; suitable for unit tests and offline pipelines only.
+
+## Offline Embedding Record Preparation
+
+**`app/rag/vector_records.py`** builds **`VectorRecord`** rows by calling **`generate_embedding`** on each `RAGDocument`’s `content` and merging document metadata with embedding metadata—**without** writing to Postgres, pgvector, Pinecone, Qdrant, or any external index.
+
+- **Boundary:** ingestion/chunking (`ingestion.py`) → embeddings (`app/embeddings`) → **vector-ready records** (`vector_records.py`) → in-memory store, or offline **`make pg-index`** / **`make pg-index-16`** into **`PgVectorStore`**.
+- **Mock default:** `embedding_provider="mock"` keeps **16-D deterministic** vectors for CI and local pipelines.
+- **OpenAI:** you can pass `embedding_provider="openai"` in **manual** jobs when keys and data review are in place; **unit tests stick to mock** so nothing hits the network.
+
+## Vector Store Interface
+
+**`app/rag/vector_store.py`** defines a small **`VectorStore`** contract (`upsert`, `search`, `count`) with an **`InMemoryVectorStore`** used for **tests and local experiments**. Search uses **cosine similarity** over stored `VectorRecord.vector` values; **dimension mismatches are skipped** rather than scored.
+
+- **Why:** keep retrieval and indexing **decoupled** from storage vendors; RAG retrievers depend on **`VectorStore`**, not a specific SDK.
+- **Default path:** **`InMemoryVectorStore`** only—no PostgreSQL, no network, no OpenAI in **`make ci`**.
+- **Pgvector adapter:** **`PgVectorStore`** implements the same interface for **opt-in** staging profiles; see [ADR 0001: PgVector Store Design](docs/adr/0001-pgvector-store-design.md).
+- **Other backends:** Pinecone, Qdrant, Weaviate remain out of scope; additional adapters would implement **`VectorStore`** the same way.
+
+## Local PgVector Development Environment
+
+**Local development only.** The Docker Compose file uses fixed dev credentials (`inchand` / `inchand_dev_password`)—**never** reuse them in production.
+
+This provides a Postgres + pgvector container and SQL migrations (`db/migrations/0001_create_rag_vector_records.sql`, `0002` for 16-D smoke). The **`PgVectorStore`** adapter (`app/rag/pgvector_store.py`) uses **`psycopg`**. **`retrieve_context`** uses **`InMemoryVectorStore`** by default; with **`RAG_PROFILE=semantic_pgvector`** or **`semantic_pgvector_16`**, it routes semantic retrieval through **`PgVectorStore`** (requires prior offline indexing).
+
+```bash
+make pg-up      # docker compose up -d  (image: pgvector/pgvector:pg16)
+make pg-init    # apply migration via scripts/db_init_pgvector.sh
+make pg-logs    # follow postgres logs
+make pg-down    # docker compose down
+```
+
+Optional: set **`DATABASE_URL`** before **`make pg-init`** (not printed by the script). Default:
+
+`postgresql://inchand:inchand_dev_password@127.0.0.1:5432/inchand_ai`
+
+Verify the empty table:
+
+```bash
+psql "postgresql://inchand:inchand_dev_password@127.0.0.1:5432/inchand_ai" \
+  -c "SELECT COUNT(*) FROM rag_vector_records;"
+```
+
+**`make ci`** does not start Docker or require Postgres. **`pg-*`** targets are for manual local validation only.
+
+## PgVectorStore Adapter
+
+**`PgVectorStore`** (`app/rag/pgvector_store.py`) implements the existing **`VectorStore`** interface against **`rag_vector_records`** (cosine distance via pgvector, `ON CONFLICT` upsert by `record_id`).
+
+- **Runtime (opt-in):** wired into **`retrieve_context`** when **`RAG_PROFILE`** is **`semantic_pgvector`** or **`semantic_pgvector_16`** (and **`VECTOR_STORE_PROVIDER=pgvector`**). Not the default; not used in **`make ci`**.
+- **`InMemoryVectorStore`** remains the default for CI, unit tests, **`semantic_local`**, and unset **`RAG_PROFILE`**.
+- Optional live integration tests (migration must be applied first):
+
+```bash
+make pg-up
+make pg-init
+make test-pgvector
+# or:
+PGVECTOR_TEST_DATABASE_URL=postgresql://inchand:inchand_dev_password@127.0.0.1:5432/inchand_ai \
+  pytest -m pgvector
+```
+
+## Offline Corpus Indexing to PgVector
+
+**`scripts/index_corpus_to_pgvector.py`** loads the manifest-backed **`vendor_ticket`** corpus (`default_vendor_ticket_documents`), builds **`VectorRecord`** rows (`rag_documents_to_vector_records`), and upserts into **`PgVectorStore`**. Indexing is **offline only** (no writes during HTTP requests). Runtime reads Postgres only when a pgvector **`RAG_PROFILE`** is active and the table is already indexed.
+
+**Dimension alignment (important):**
+
+| Setting | Default migration | Mock embeddings (`EMBEDDING_PROVIDER=mock`) |
+|---------|-------------------|-----------------------------------------------|
+| Table column | `VECTOR(1536)` | **16** dimensions |
+| Env | `PGVECTOR_DIMENSIONS=1536` | Produces **16-D** vectors |
+
+The script **fails cleanly** when record dimensions ≠ `PGVECTOR_DIMENSIONS` (no padding). With default mock embeddings, **`make pg-index-dry-run`** against `PGVECTOR_DIMENSIONS=1536` will **fail** until you either:
+
+- Use a real embedding model that outputs **1536** dimensions (e.g. OpenAI `text-embedding-3-small` with `EMBEDDING_PROVIDER=openai` and a valid key—**not** used in CI), or
+- Use a **test** Postgres schema with `VECTOR(16)` and `PGVECTOR_DIMENSIONS=16`.
+
+Environment (passwords are never printed):
+
+| Variable | Default |
+|----------|---------|
+| `PGVECTOR_DATABASE_URL` | local docker-compose URL |
+| `PGVECTOR_TABLE` | `rag_vector_records` |
+| `PGVECTOR_DIMENSIONS` | `1536` |
+| `EMBEDDING_PROVIDER` | `mock` |
+| `EMBEDDING_MODEL` | `mock-embedding-small` |
+| `DRY_RUN` | unset (`true` = validate only, no DB writes) |
+
+Recommended local flow:
+
+```bash
+make pg-up
+make pg-init
+# align PGVECTOR_DIMENSIONS with your embedding model + table schema
+make pg-index-dry-run
+make pg-index
+```
+
+## PgVector 16-D Local Smoke
+
+The default **`rag_vector_records`** table uses **`VECTOR(1536)`** (production-like MVP). **Mock** embeddings are **16-D**, so they cannot be indexed into that table without a real 1536-D embedding model.
+
+**`rag_vector_records_16`** is a **separate local smoke table** (`db/migrations/0002_create_rag_vector_records_16.sql`) for end-to-end validation:
+
+**corpus → mock 16-D embeddings → `PgVectorStore` → PostgreSQL → `semantic_retrieve`**
+
+This is **not** the production schema. Normal **`make ci`** does **not** require Docker or Postgres. Runtime pgvector is **opt-in** via **`RAG_PROFILE=semantic_pgvector_16`** (local mock) or **`semantic_pgvector`** (staging 1536-D); see linked smoke sections below.
+
+```bash
+make pg-up
+make pg-init          # 1536-D production-like table (unchanged)
+make pg-init-16       # 16-D smoke table
+make pg-index-16-dry-run
+make pg-index-16
+make pg-smoke-16
+```
+
+## PgVector Retrieval Profile Smoke Test
+
+End-to-end validation for the **opt-in** **`semantic_pgvector_16`** profile: offline index → FastAPI with pgvector env → **`make smoke-semantic`**. Default CI/runtime remain **memory/mock**; this is **local manual** only (Docker + Postgres required on your machine).
+
+### A. Start and initialize pgvector
+
+```bash
+make pg-up
+make pg-init
+make pg-init-16
+```
+
+### B. Index corpus into the 16-D table
+
+```bash
+PGVECTOR_TABLE=rag_vector_records_16 \
+PGVECTOR_DIMENSIONS=16 \
+EMBEDDING_PROVIDER=mock \
+EMBEDDING_MODEL=mock-embedding-small \
+make pg-index-16
+```
+
+Confirm **`upserted_count > 0`** in the script output. The workflow does **not** index during HTTP requests.
+
+### C. Start FastAPI with pgvector profile
+
+In one terminal (project root):
+
+```bash
+set -a && source .env && set +a
+export RAG_PROFILE=semantic_pgvector_16
+export VECTOR_STORE_PROVIDER=pgvector
+export PGVECTOR_TABLE=rag_vector_records_16
+export PGVECTOR_DIMENSIONS=16
+export EMBEDDING_PROVIDER=mock
+export EMBEDDING_MODEL=mock-embedding-small
+export LLM_PROVIDER=mock
+export RAG_STRATEGY=semantic
+
+PYTHONPATH=. python3.11 -m uvicorn app.api.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+Set **`PGVECTOR_DATABASE_URL`** in **`.env`** (or export it) to match your local Postgres. **`make config-check`** before **`uvicorn`** is recommended.
+
+### D. Run workflow smoke (second terminal)
+
+Use the **same** retrieval env as the server. **`make smoke-semantic`** preflight requires **`RAG_STRATEGY=semantic`**; **`RAG_PROFILE=semantic_pgvector_16`** selects the pgvector store path in **`retrieve_context`**.
+
+```bash
+set -a && source .env && set +a
+export RAG_PROFILE=semantic_pgvector_16
+export VECTOR_STORE_PROVIDER=pgvector
+export PGVECTOR_TABLE=rag_vector_records_16
+export PGVECTOR_DIMENSIONS=16
+export EMBEDDING_PROVIDER=mock
+export EMBEDDING_MODEL=mock-embedding-small
+export LLM_PROVIDER=mock
+export RAG_STRATEGY=semantic
+
+make smoke-semantic
+```
+
+### Expected output checks
+
+Inspect JSON from **`POST /run-vendor-ticket`** (printed by the smoke script):
+
+| Field | Expected |
+|-------|----------|
+| `workflow_status` | `"awaiting_approval"` |
+| `errors` | `[]` |
+| `retrieval_summary.rag_profile` | `"semantic_pgvector_16"` |
+| `retrieval_summary.requested_strategy` | `"semantic"` |
+| `retrieval_summary.effective_strategy` | `"semantic"` |
+| `retrieval_summary.vector_store_provider` | `"pgvector"` |
+| `retrieval_summary.pgvector_table` | `"rag_vector_records_16"` |
+| `retrieval_summary.pgvector_dimensions` | `16` |
+| `retrieval_summary.provider` | `"semantic"` |
+| `specialist_output.evidence.rag_document_count` | `> 0` |
+
+**`retrieval_summary`** must **not** contain **`database_url`** or credentials.
+
+### Fallback troubleshooting
+
+| Symptom | Likely cause |
+|---------|----------------|
+| **`errors`** contains **`rag_strategy_error`**, **`effective_strategy`** is **`mock`** | Postgres not running, migration not applied, missing **`PGVECTOR_DATABASE_URL`**, or **`create_vector_store`** / search failed |
+| **`effective_strategy`** is **`semantic`** but **`rag_document_count`** is **0** | Table empty—re-run **B** (`make pg-index-16`) |
+| **`make pg-index-16`** fails before upsert | Dimension mismatch (mock **16-D** vs wrong **`PGVECTOR_DIMENSIONS`** / table schema) |
+| Smoke script exits before curl | **`RAG_STRATEGY`** not **`semantic`** in the smoke terminal |
+| Draft ignores corpus | Check **`specialist_output.evidence`**; retrieval may have fallen back to mock |
+
+Do **not** use OpenAI for this smoke unless you are separately testing the LLM adapter (**`make smoke-openai`**).
+
+## 1536-D PgVector Staging Profile
+
+**`semantic_pgvector`** is an **opt-in staging/manual** profile for the production-like table **`rag_vector_records`** (`VECTOR(1536)`). It uses **`EMBEDDING_PROVIDER`** / **`EMBEDDING_MODEL`** from settings (typically OpenAI **`text-embedding-3-small`**)—**not** hardcoded mock. **Not** the default; **not** for CI; **no** request-time indexing; **no** secrets in **`retrieval_summary`**.
+
+Index with the **same** embedding provider, model, and dimensions you use at retrieval time.
+
+### A. Start DB and apply production-like migration
+
+```bash
+make pg-up
+make pg-init
+```
+
+### B. Index corpus with 1536-D embeddings
+
+```bash
+export EMBEDDING_PROVIDER=openai
+export EMBEDDING_MODEL=text-embedding-3-small
+export OPENAI_API_KEY=...   # never commit; not required in CI
+export PGVECTOR_TABLE=rag_vector_records
+export PGVECTOR_DIMENSIONS=1536
+make pg-index-dry-run
+make pg-index
+```
+
+### C. Start API
+
+```bash
+set -a && source .env && set +a
+export RAG_PROFILE=semantic_pgvector
+export VECTOR_STORE_PROVIDER=pgvector
+export PGVECTOR_TABLE=rag_vector_records
+export PGVECTOR_DIMENSIONS=1536
+export EMBEDDING_PROVIDER=openai
+export EMBEDDING_MODEL=text-embedding-3-small
+export RAG_STRATEGY=semantic
+export LLM_PROVIDER=mock
+
+PYTHONPATH=. python3.11 -m uvicorn app.api.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+Set **`PGVECTOR_DATABASE_URL`** in **`.env`** as needed.
+
+### D. Run smoke
+
+Same env in a second terminal, then:
+
+```bash
+make smoke-semantic
+```
+
+### Expected response
+
+| Field | Expected |
+|-------|----------|
+| `errors` | `[]` |
+| `retrieval_summary.rag_profile` | `"semantic_pgvector"` |
+| `retrieval_summary.vector_store_provider` | `"pgvector"` |
+| `retrieval_summary.pgvector_table` | `"rag_vector_records"` |
+| `retrieval_summary.pgvector_dimensions` | `1536` |
+| `retrieval_summary.effective_strategy` | `"semantic"` |
+
+## PgVector Retrieval Evaluation Run
+
+**`scripts/evaluate_pgvector_retrieval.py`** runs **`corpus/vendor_ticket/eval_cases.json`** against a **PgVector-backed** **`semantic_retrieve`** path. **Manual/staging only**; **not** in CI; **no** request-time indexing; **no** API keys or database URLs printed. Index the corpus first with the **same** **`EMBEDDING_PROVIDER`** / **`EMBEDDING_MODEL`** / dimensions you use for evaluation.
+
+**16-D local mock path:**
+
+```bash
+make pg-up
+make pg-init
+make pg-init-16
+make pg-index-16
+export VECTOR_STORE_PROVIDER=pgvector
+export PGVECTOR_TABLE=rag_vector_records_16
+export PGVECTOR_DIMENSIONS=16
+export EMBEDDING_PROVIDER=mock
+export EMBEDDING_MODEL=mock-embedding-small
+make pg-eval
+```
+
+**1536-D staging path:**
+
+```bash
+make pg-up
+make pg-init
+export VECTOR_STORE_PROVIDER=pgvector
+export PGVECTOR_TABLE=rag_vector_records
+export PGVECTOR_DIMENSIONS=1536
+export EMBEDDING_PROVIDER=openai
+export EMBEDDING_MODEL=text-embedding-3-small
+export OPENAI_API_KEY=...
+make pg-index
+make pg-eval
+```
+
+Set **`PGVECTOR_DATABASE_URL`** in **`.env`** as needed. Optional: **`OUTPUT_JSON=true`** for machine-readable **`RetrievalEvalReport`** JSON.
+
+**Healthy run:** `pass_rate=1.0`, strong **`mean_recall_at_k` / `mean_hit_rate` / `mean_mrr`**, **`quality gates: passed`**, and `all retrieval eval cases passed`. If gates fail, inspect the **`quality gates`** block and per-case details.
+
+## Retrieval Backend Baseline Comparison
+
+**`scripts/compare_retrieval_backends.py`** runs **`eval_cases.json`** twice: an **in-memory** baseline vs **PgVector** (`semantic_retrieve` + `create_vector_store`). **Manual/staging only**; **not** in CI; **no** indexing in the script; index first with the **same** embedding settings you use at retrieval time.
+
+**Baseline modes** (`BASELINE_PROVIDER`, default **`default`**):
+
+| Mode | Baseline | Use when |
+|------|----------|----------|
+| **`default`** (unset) | `run_default_vendor_ticket_retrieval_eval()` — mock 16-D in-memory bootstrap | CI-safe checks; quick local compare |
+| **`same_embedding`** | In-memory store built from the same corpus + **`EMBEDDING_PROVIDER`** / **`EMBEDDING_MODEL`** as pgvector | **1536-D staging** — storage/backend parity, not embedding-space drift |
+
+With **`default`**, mock baseline vs OpenAI pgvector often yields **`cases_with_different_results > 0`** even when both pass all cases (different embedding spaces / ranking). **`RETRIEVAL_REQUIRE_MATCHING_CASE_RESULTS=true`** is only meaningful with **`BASELINE_PROVIDER=same_embedding`**.
+
+Requires **`VECTOR_STORE_PROVIDER=pgvector`** for the pgvector side. Exit **0** only when **`baseline.pass_rate == pgvector.pass_rate`** and **`pgvector.pass_rate == 1.0`**. Optional **`OUTPUT_JSON=true`** for structured comparison JSON (includes **`baseline_provider`**, **`embedding_provider`**, **`embedding_model`** when applicable). No database URLs or API keys printed.
+
+**16-D local:**
+
+```bash
+make pg-up
+make pg-init
+make pg-init-16
+make pg-index-16
+export VECTOR_STORE_PROVIDER=pgvector
+export PGVECTOR_TABLE=rag_vector_records_16
+export PGVECTOR_DIMENSIONS=16
+export EMBEDDING_PROVIDER=mock
+export EMBEDDING_MODEL=mock-embedding-small
+make pg-compare
+```
+
+**1536-D staging (recommended strict compare):**
+
+```bash
+make pg-up
+make pg-init
+export VECTOR_STORE_PROVIDER=pgvector
+export PGVECTOR_TABLE=rag_vector_records
+export PGVECTOR_DIMENSIONS=1536
+export EMBEDDING_PROVIDER=openai
+export EMBEDDING_MODEL=text-embedding-3-small
+export OPENAI_API_KEY=...
+export BASELINE_PROVIDER=same_embedding
+make pg-index
+make pg-compare
+```
+
+**Healthy result:** same **`pass_rate`** as baseline, matching **`mean_recall_at_k` / `mean_hit_rate` / `mean_mrr`**, and **`cases_with_different_results=0`** (with **`same_embedding`** baseline). Use before promoting **`semantic_pgvector`** beyond manual validation.
+
+## Retrieval Quality Threshold Gates
+
+**`make pg-eval`** and **`make pg-compare`** apply **staging quality gates** from **`app/rag/evaluation.py`** (enabled by default via **`RETRIEVAL_QUALITY_GATES=true`**):
+
+| Gate | Meaning |
+|------|---------|
+| **`RETRIEVAL_MIN_*`** | Minimum **`pass_rate`**, **`mean_recall_at_k`**, **`mean_hit_rate`**, **`mean_mrr`** on pgvector report |
+| **`RETRIEVAL_MAX_*_REGRESSION`** | Max allowed drop vs in-memory baseline (delta = pgvector − baseline) |
+| **`RETRIEVAL_REQUIRE_MATCHING_CASE_RESULTS`** | **`cases_with_different_results=0`** for **`pg-compare`** |
+| **`RETRIEVAL_MAX_NEAR_MISS_VIOLATIONS`** | Optional max absolute **`near_miss_violation_count`** on a single report (unset = disabled) |
+| **`RETRIEVAL_MAX_NEAR_MISS_VIOLATION_REGRESSION`** | Optional max increase in near-miss violations vs baseline on **`pg-compare`** (unset = disabled) |
+
+Scripts print a **`quality gates:`** block (passed/failed per gate). Exit **0** only when all gates pass. Set **`RETRIEVAL_QUALITY_GATES=false`** to restore legacy exit rules (pass rate only). Near-miss gates are **optional**—set the env vars above (e.g. **`0`** for strict staging) to fail **`pg-eval`** / **`pg-compare`** when wrong-but-plausible docs outrank expected hits; they do **not** change per-case **`passed`** semantics. **Not** used in CI.
+
+## Strict Staging Retrieval Quality Profile
+
+**What this is:** a repeatable **operator env block** for **`make pg-eval`** and **`make pg-compare`** before promoting **`semantic_pgvector`**. It tightens retrieval quality gates beyond defaults where noted. **Disabled unless you export these variables**; **not** used in **`make ci`**.
+
+Export after your normal **`VECTOR_STORE_PROVIDER`**, **`PGVECTOR_*`**, and **`EMBEDDING_*`** setup (see [Staging Retrieval Evaluation Runbook](#staging-retrieval-evaluation-runbook)):
+
+```bash
+export RETRIEVAL_QUALITY_GATES=true
+export RETRIEVAL_MIN_PASS_RATE=1.0
+export RETRIEVAL_MIN_MEAN_RECALL_AT_K=1.0
+export RETRIEVAL_MIN_MEAN_HIT_RATE=1.0
+export RETRIEVAL_MIN_MEAN_MRR=0.8
+export RETRIEVAL_MAX_PASS_RATE_REGRESSION=0.0
+export RETRIEVAL_MAX_MEAN_RECALL_AT_K_REGRESSION=0.0
+export RETRIEVAL_MAX_MEAN_HIT_RATE_REGRESSION=0.0
+export RETRIEVAL_MAX_MEAN_MRR_REGRESSION=0.05
+export RETRIEVAL_REQUIRE_MATCHING_CASE_RESULTS=true
+export RETRIEVAL_MAX_NEAR_MISS_VIOLATIONS=0
+export RETRIEVAL_MAX_NEAR_MISS_VIOLATION_REGRESSION=0
+```
+
+**Why these values:** for the current curated **`eval_cases.json`**, **`pass_rate`**, **`mean_recall_at_k`**, and **`mean_hit_rate`** should stay at **1.0** when indexing matches retrieval—so minima are strict. **`mean_mrr`** can differ slightly between backends (ranking order); **`RETRIEVAL_MIN_MEAN_MRR=0.8`** allows a small tolerance while still catching large ranking collapse. **Near-miss** violations should be **zero** in strict staging (**`RETRIEVAL_MAX_NEAR_MISS_VIOLATIONS=0`** and **`RETRIEVAL_MAX_NEAR_MISS_VIOLATION_REGRESSION=0`**). **`RETRIEVAL_REQUIRE_MATCHING_CASE_RESULTS=true`** is meaningful for **`pg-compare`** only when **`BASELINE_PROVIDER=same_embedding`**; with the default mock baseline, ordering diffs may reflect embedding-model mismatch, not storage regression.
+
+**Commands** (same shell as the exports; for 1536-D staging add **`export BASELINE_PROVIDER=same_embedding`** before **`make pg-compare`**):
+
+```bash
+make pg-eval
+make pg-compare
+```
+
+**Promotion rule:** proceed only if **both** exit **0**. If either fails, read the **`quality gates:`** block and per-case output; fix index, env, or expectations—not the gates by default.
+
+**If strict gates fail after intentional corpus changes:** re-run the in-memory baseline and **`pg-compare`** diffs; inspect **`cases_with_different_results`** and near-miss case IDs. Update **`eval_cases.json`** only when expectations were wrong. Do **not** loosen gates solely to pass—adjust the corpus, index, or embeddings first.
+
+## Staging Retrieval Evaluation Runbook
+
+**Purpose:** validate **pgvector** retrieval quality before widening rollout of **`semantic_pgvector`** or **`semantic_pgvector_16`**. Run **`make pg-eval`** and **`make pg-compare`** against the in-memory baseline after corpus, index, embedding-model, or profile changes. The eval corpus includes **ambiguous and ranking-sensitive** cases (short queries, near-miss wording, multi-document expectations)—not only the original smoke trio. For a **strict** env preset before **`semantic_pgvector`** promotion, see [Strict Staging Retrieval Quality Profile](#strict-staging-retrieval-quality-profile). **Manual/staging only**—**not** part of **`make ci`**.
+
+### Recommended flow
+
+**A. Environment verification**
+
+```bash
+make config-check
+```
+
+Confirm **`EMBEDDING_PROVIDER`** / **`EMBEDDING_MODEL`** match the index you will use. Confirm **`PGVECTOR_TABLE`** and **`PGVECTOR_DIMENSIONS`** match the table schema. Set the retrieval profile you intend to promote:
+
+| Path | Profile | Table | Typical embeddings |
+|------|---------|-------|-------------------|
+| Local mock smoke | **`semantic_pgvector_16`** | `rag_vector_records_16` | `mock` / `mock-embedding-small` (16-D) |
+| Staging / production-like | **`semantic_pgvector`** | `rag_vector_records` | `openai` / `text-embedding-3-small` (1536-D) |
+
+Also set **`VECTOR_STORE_PROVIDER=pgvector`** and **`PGVECTOR_DATABASE_URL`** (via **`.env`**). See [PgVector Retrieval Evaluation Run](#pgvector-retrieval-evaluation-run) for full env blocks.
+
+**B. Ensure corpus is indexed**
+
+Indexing must use the **same** **`EMBEDDING_PROVIDER`** / **`EMBEDDING_MODEL`** (and dimensions) as evaluation and runtime retrieval.
+
+| Path | Command |
+|------|---------|
+| 16-D local mock | **`make pg-index-16`** (after **`make pg-init-16`**) |
+| 1536-D staging | **`make pg-index`** (after **`make pg-init`**) |
+
+Optional: **`make pg-index-16-dry-run`** / **`make pg-index-dry-run`** to validate without writes.
+
+**C. Run retrieval evaluation**
+
+```bash
+make pg-eval
+```
+
+| Output | Meaning |
+|--------|---------|
+| **`pass_rate`** | Fraction of eval cases that retrieved all expected document IDs |
+| **`mean_recall_at_k`** | Average recall@k across cases |
+| **`mean_hit_rate`** | Average binary hit (any expected doc in top-k) |
+| **`mean_mrr`** | Average mean reciprocal rank of first expected hit |
+
+Inspect per-case lines for misses. The **`quality gates:`** block enforces minimum metrics and fails the run on regression (see [Retrieval Quality Threshold Gates](#retrieval-quality-threshold-gates)).
+
+**D. Run baseline comparison**
+
+```bash
+export BASELINE_PROVIDER=same_embedding   # required for meaningful 1536-D strict compare
+make pg-compare
+```
+
+Runs **`eval_cases.json`** on **in-memory** baseline vs **pgvector** (use **`same_embedding`** for OpenAI 1536-D staging). Key comparison fields:
+
+| Field | Meaning |
+|-------|---------|
+| **`pass_rate_delta`** | pgvector **`pass_rate`** − baseline **`pass_rate`** (want **0**) |
+| **`mean_mrr_delta`** | pgvector **`mean_mrr`** − baseline **`mean_mrr`** (want **≥ 0**, comparable) |
+| **`cases_with_different_results`** | Cases where pass/misses/**`retrieved_document_ids`** differ (want **0**) |
+
+**E. Promotion decision**
+
+**Healthy signals (proceed toward wider rollout):**
+
+- **`pass_rate == 1.0`** on **`pg-eval`**
+- **`cases_with_different_results == 0`** on **`pg-compare`**
+- **`quality gates: passed`** on both commands
+- **`mean_mrr`** (and recall/hit rate) **comparable to** in-memory baseline
+
+**Warning signals (do not promote; fix index/env/corpus first):**
+
+- Lower **`mean_recall_at_k`** or **`mean_mrr`** vs baseline
+- Non-zero **`cases_with_different_results`**
+- Unexpected **`retrieved_document_ids`** or new **`missing_document_ids`**
+- Source-type coverage regressions (expected policy/example docs missing from top-k)
+
+### Troubleshooting
+
+| Symptom | Likely cause | Remediation |
+|---------|--------------|-------------|
+| Dimension mismatch on index/eval | **`PGVECTOR_DIMENSIONS`** or table ≠ embedding width | Align table migration, **`PGVECTOR_DIMENSIONS`**, and provider; re-index |
+| **`pg-eval`** returns no / wrong hits | Empty or stale **`rag_vector_records*`** | Run **`make pg-index`** or **`make pg-index-16`**; verify row count in Postgres |
+| Baseline passes, pgvector fails | Embedding **provider/model** differ between index and eval | Re-index with same **`EMBEDDING_*`** as **`pg-eval`** / **`pg-compare`** |
+| Gate failures after corpus edit | Index not rebuilt; eval cases out of sync | **`make corpus-check`**; update **`eval_cases.json`** if needed; re-index |
+| **`cases_with_different_results > 0`** | Store drift, wrong table/profile, or **mock vs OpenAI baseline** | For 1536-D staging use **`BASELINE_PROVIDER=same_embedding`**; confirm **`PGVECTOR_TABLE`**, profile, and env |
+
+### Operator notes
+
+- Pgvector retrieval evaluation is **staging/manual only**—never required for **`make ci`** (CI stays mock/in-memory).
+- Do **not** paste **`OPENAI_API_KEY`** into tickets, logs, or screenshots; use **`.env`** locally only.
+- Do **not** add pgvector eval to CI workflows without an explicit platform decision.
+- **Re-run indexing** after any corpus change or **`EMBEDDING_MODEL`** change before trusting **`pg-eval`** / **`pg-compare`** results.
+
+Detail for individual commands: [PgVector Retrieval Evaluation Run](#pgvector-retrieval-evaluation-run), [Retrieval Backend Baseline Comparison](#retrieval-backend-baseline-comparison).
+
+## Retrieval evaluation snapshots
+
+Known-good **manual staging** baselines live under [`docs/retrieval_snapshots/`](docs/retrieval_snapshots/). The first **Golden Snapshot** ([`golden_snapshot_1536_openai_pgvector.md`](docs/retrieval_snapshots/golden_snapshot_1536_openai_pgvector.md)) records strict-gate **`pg-eval`** / **`pg-compare`** (same-embedding parity) and **`semantic_pgvector`** API smoke for OpenAI **1536-D** + pgvector. Re-compare future corpus, embedding, or retrieval-stack changes against it before promotion—not part of **`make ci`**.
+
+## Vector Store Provider Factory
+
+**`app/rag/vector_store_factory.py`** builds a **`VectorStore`** from configuration:
+
+| Provider | Implementation |
+|----------|----------------|
+| `memory` (default) | `InMemoryVectorStore` |
+| `pgvector` | `PgVectorStore` (requires `PGVECTOR_DATABASE_URL`) |
+
+Environment: `VECTOR_STORE_PROVIDER`, `PGVECTOR_DATABASE_URL`, `PGVECTOR_TABLE`, `PGVECTOR_DIMENSIONS` (see `.env.example`).
+
+- **Default remains `memory`**; normal **`make ci`** does not connect to Postgres.
+- **Pgvector** is used only for **`semantic_pgvector_16`** or **`semantic_pgvector`** (and matching **`VECTOR_STORE_*`** / **`PGVECTOR_*`** env); all other profiles stay in-memory.
+
+## Semantic RAG Retriever
+
+**`app/rag/semantic_retriever.py`** wires the first **end-to-end semantic retrieval** path: **query text → `generate_embedding` → `VectorStore.search` → `RAGResult`**, using **`vector_record_to_rag_document`** for scored `RAGDocument` rows.
+
+- **Defaults:** **`embedding_provider="mock"`** and **`InMemoryVectorStore`** (via **`build_in_memory_store_from_documents`**) keep runs **local and deterministic**; cosine similarity in the in-memory store drives ranking.
+- **Interfaces:** retrieval depends on **`VectorStore`** and the embedding factory, **not** on pgvector, Pinecone, Qdrant, or vendor-specific vector SDKs.
+- **`PgVectorStore`** is used when **`RAG_PROFILE`** selects a pgvector preset; the default graph path stays in-memory. **`semantic_retrieve`** stays storage-agnostic via **`VectorStore`**.
+- **Tests** use **mock embeddings only** and do not call OpenAI or write to any database.
+
+## RAG Context Injection
+
+**`build_vendor_ticket_prompt`** in **`app/prompts/vendor_ticket.py`** appends a Persian **«اسناد و سیاست‌های بازیابی‌شده»** section built from **`RAGDocument`** rows (title, source type, optional similarity score, truncated content). The **`vendor_ticket_node`** reads **`retrieved_context["rag_documents"]`** (dicts from state), coerces them to **`RAGDocument`**, and passes them into the prompt builder so the **LLM sees policy snippets and approved response patterns** alongside ticket fields.
+
+- **Retrieval stays provider-agnostic:** **`retrieve_context`** calls **`retrieve_for_workflow`** (default **`mock`** catalog; **`semantic`** and pgvector profiles swap store/backend without changing LangGraph topology).
+- **Safety:** long document bodies are **truncated** per document in the prompt. Default CI/tests use **mock** only (no OpenAI, no Postgres). Pgvector prompt injection requires an explicit pgvector profile and local/staging setup.
+- **Human approval:** drafts are still **operator-facing only** until reviewed; nothing is sent to a vendor without **human approval**.
+
+## Retrieval Strategy Layer
+
+**`app/rag/strategy.py`** exposes **`retrieve_for_workflow`** and **`RetrievalStrategyName`**. Workflow code (for example **`retrieve_context`**) calls **`retrieve_for_workflow`** instead of hardcoding **`retrieve_documents`** so orchestration stays decoupled from how hits are produced.
+
+- **Strategies:** **`mock`** (default, same catalog as before), **`policy_only`** and **`approved_examples`** (filter the mock catalog with **`provider="strategy"`** metadata), and **`semantic`**, which runs **`semantic_retrieve`** when the caller passes an **explicit `VectorStore`** (typically **`InMemoryVectorStore`** built offline for tests or demos). There is **no global vector store** inside the strategy layer.
+- **Default graph path:** **`retrieve_context`** reads **`RAG_STRATEGY`** / **`RAG_PROFILE`** from **`AppSettings`** (default **`mock`**). **`semantic_local`** / **`RAG_STRATEGY=semantic`** use the bootstrap **`InMemoryVectorStore`**; **`semantic_pgvector`** / **`semantic_pgvector_16`** use **`PgVectorStore`** when configured. Invalid strategy values fall back to **mock** with a **`ToolError`**.
+- **Why:** swap **mock**, **filtered**, **semantic**, or future **hybrid** retrieval without editing node topology or FastAPI.
+- **Observability:** **`tool_results["retrieve_for_workflow"]`** records **`strategy`**, **`count`**, and **`provider`**; the legacy **`retrieve_documents`** summary remains for compatibility.
+
+## Runtime RAG Store Bootstrap
+
+**`app/rag/bootstrap.py`** provides a **small, deterministic Persian corpus** (`default_vendor_ticket_documents`) and helpers to build a **fresh `InMemoryVectorStore`** (`build_default_vendor_ticket_vector_store`) and run **semantic retrieval** in one call (`retrieve_semantic_vendor_ticket_context`) using **mock embeddings** only.
+
+- **Purpose:** local demos and scripts that need **semantic-style** ranking **without pgvector**, **without Postgres**, and **without a process-wide singleton store**—each helper builds or queries an explicit store.
+- **Graph default:** **`RAG_STRATEGY`** defaults to **`mock`** so CI and local runs match earlier behavior unless you opt into **`semantic`**, **`policy_only`**, or **`approved_examples`** in **`.env`**.
+- **No hidden globals:** each **`semantic`** run in the graph builds a **fresh** default corpus store (see bootstrap module); for custom corpora, callers can still build a **`VectorStore`** elsewhere and call **`retrieve_for_workflow`** directly.
+
+## Versioned Corpus Manifest Foundation
+
+The default vendor-ticket semantic corpus lives under **`corpus/vendor_ticket/`**: a **`manifest.json`** plus small **UTF-8 Persian** text files in **`policies/`**, **`approved_patterns/`**, and **`style_guides/`**. **`app/rag/corpus_manifest.py`** defines **`CorpusManifest`** / **`CorpusManifestDocument`** and loads them into **`RAGDocument`** rows with **deterministic list order**—no globbing, no DB, no background workers.
+
+- **Why leave Python:** manifests and bodies are **easier to review, diff, and version** than long embedded strings, and they foreshadow **audit-friendly ingestion** without building a pipeline yet.
+- **Scope today:** **filesystem only**; **`default_vendor_ticket_documents()`** reads **`manifest.json`** at runtime (same public bootstrap API as before).
+- **Indexing:** offline **`make pg-index`** / **`make pg-index-16`** materialize the manifest into Postgres; the manifest remains the **source of truth** for corpus content.
+
+## Retrieval Evaluation Foundation
+
+**`app/rag/evaluation.py`** compares **`RAGResult`** rows to expectations. **Labeled cases** live in **`corpus/vendor_ticket/eval_cases.json`** (UTF-8 JSON: **`eval_version`**, **`workflow_type`**, **`locale`**, ordered **`cases`**). **`load_retrieval_eval_cases`** / **`load_vendor_ticket_eval_cases_from_file`** validate that file; **`default_vendor_ticket_eval_cases()`** reads the default path next to the corpus manifest—**Python is the engine, not the source of truth** for case definitions.
+
+- **Eval engine:** no LLM calls in **`evaluation.py`**; default **`run_default_vendor_ticket_retrieval_eval()`** uses in-memory semantic retrieval (CI-safe). **`make pg-eval`** / **`make pg-compare`** exercise pgvector separately (manual/staging).
+- **`eval_cases.json`** is intentionally broader than the original three-case smoke set: **15** labeled cases with short queries, conversational Persian, ambiguous phrasing, multi-document expectations, source-type mixes, and near-miss wording aligned to the vendor-ticket corpus. Staging **`pg-eval`** / **`pg-compare`** quality depends on this coverage—not on case count alone.
+- **`run_default_vendor_ticket_retrieval_eval()`** still runs the default file-backed suite over **mock** semantic retrieval (CI-safe); use **`pg-eval`** for ranking-sensitive validation.
+- **Ranking metrics** (per case and report averages): **Recall@K** (fraction of expected document ids found in top K), **Hit Rate** (1.0 if any expected id appears), **MRR** (reciprocal rank of the first expected hit). **`pass_rate`** remains strict case-level success (all expected ids + required source types).
+- **Near-miss ranking guard** (metadata-driven): selected cases set **`near_miss_document_ids`** in **`eval_cases.json`**. A violation is recorded when a plausible-but-wrong document appears **before** the first expected hit (or at any rank if no expected hit). **`passed`** is unchanged; reports and **`pg-eval`** / **`pg-compare`** surface **`near_miss_violation_count`** and offending case IDs. Optional staging gates **`RETRIEVAL_MAX_NEAR_MISS_VIOLATIONS`** / **`RETRIEVAL_MAX_NEAR_MISS_VIOLATION_REGRESSION`** can fail promotion runs when violations exceed thresholds (see [Retrieval Quality Threshold Gates](#retrieval-quality-threshold-gates)).
+- **Use case:** compare **in-memory vs pgvector** (`make pg-compare`) and future hybrid/reranked retrieval using metrics beyond binary pass/fail.
+- **Use case:** evolve **`eval_version`** and cases alongside **`manifest_version`** before packaging or production **`VectorStore`** work.
+
+## Corpus/Eval Consistency Guard
+
+**`app/rag/consistency.py`** cross-checks **`corpus/vendor_ticket/eval_cases.json`** against **`corpus/vendor_ticket/manifest.json`**:
+
+- every **`expected_document_id`** must exist in the manifest’s **`documents`**
+- every **`required_source_type`** must be represented by the **`source_type`** of at least one of that case’s **expected** documents (not merely any row elsewhere in the manifest)
+
+**`check_default_vendor_ticket_corpus_eval_consistency()`** loads both defaults offline; **`assert_corpus_eval_consistency`** is a strict helper for tests or CI.
+
+- **Why:** stops **silent drift** when corpus rows are renamed, removed, or mis-typed relative to eval expectations.
+- **Scope:** **deterministic, filesystem-only**—no vector DB, no OpenAI, no graph or API changes.
+- **Typical use:** run (or assert) in **CI** before **packaging** the corpus or promoting pgvector staging.
+
+## Corpus Packaging + Hash Verification
+
+**`corpus/vendor_ticket/corpus.lock.json`** records **expected SHA-256 hashes and file sizes** for corpus assets (`manifest.json`, **`eval_cases.json`**, and **`.txt`** bodies). **`verify_corpus_against_lockfile`** compares on-disk files to that lockfile; changing corpus content requires **regenerating the lockfile intentionally** via **`write_corpus_lockfile`**.
+
+- **`verify_corpus_integrity`**: builds a local inventory (excludes **`corpus.lock.json`** from the hashed set).
+- **`verify_default_vendor_ticket_corpus_lockfile`**: fails on missing files, unexpected files, hash mismatch, or size mismatch.
+- **`scripts/check_corpus_integrity.py`** runs three checks and exits **0** only when all pass:
+  1. corpus integrity inventory
+  2. corpus/eval consistency (`manifest.json` vs **`eval_cases.json`**)
+  3. corpus lockfile verification
+- **CI:** run **`python3.11 scripts/check_corpus_integrity.py`** before packaging or deploy.
+
+Example (from repo root, with `PYTHONPATH=.` or after `pip install -e .`):
+
+```bash
+python3.11 scripts/check_corpus_integrity.py
+```
+
+To regenerate the lockfile after an approved corpus change:
+
+```bash
+PYTHONPATH=. python3.11 -c "
+from app.rag.corpus_integrity import write_corpus_lockfile, default_vendor_ticket_corpus_lockfile_path
+write_corpus_lockfile(
+    base_dir='corpus/vendor_ticket',
+    lockfile_path=default_vendor_ticket_corpus_lockfile_path(),
+    corpus_name='vendor_ticket',
+)
+"
+```
+
+## Runtime Retrieval Strategy Configuration
+
+**`retrieve_context`** builds a typed **`RetrievalConfig`** from **`AppSettings`** via **`build_retrieval_config_from_settings`** (see **`app/rag/config.py`**). Defaults remain **`mock`** strategy and **`top_k=5`**.
+
+### Profile presets (optional)
+
+Set **`RAG_PROFILE`** to select a named preset instead of tuning each field manually:
+
+| Profile | Strategy | Embeddings |
+|---------|----------|------------|
+| **`mock`** (preset) | `mock` | mock |
+| **`policy_only`** | `policy_only` | mock |
+| **`approved_examples`** | `approved_examples` | mock |
+| **`semantic_local`** | `semantic` (in-memory bootstrap store) | mock |
+| **`semantic_pgvector_16`** | `semantic` via **`PgVectorStore`** (`rag_vector_records_16`, mock 16-D) | mock (fixed) |
+| **`semantic_pgvector`** | `semantic` via **`PgVectorStore`** (`rag_vector_records`, 1536-D) | from **`EMBEDDING_*`** settings |
+| **`custom`** | uses **`RAG_STRATEGY`**, **`RAG_TOP_K`**, **`EMBEDDING_*`** |
+
+**`semantic_pgvector_16`** — local mock-only smoke ([PgVector Retrieval Profile Smoke Test](#pgvector-retrieval-profile-smoke-test)). **`semantic_pgvector`** — staging 1536-D ([1536-D PgVector Staging Profile](#1536-d-pgvector-staging-profile)). Neither indexes during requests; **`database_url`** is never in **`retrieval_summary`**.
+
+```env
+# Local 16-D mock
+RAG_PROFILE=semantic_pgvector_16
+PGVECTOR_TABLE=rag_vector_records_16
+PGVECTOR_DIMENSIONS=16
+
+# Staging 1536-D (index + retrieve with same EMBEDDING_* )
+RAG_PROFILE=semantic_pgvector
+PGVECTOR_TABLE=rag_vector_records
+PGVECTOR_DIMENSIONS=1536
+EMBEDDING_PROVIDER=openai
+EMBEDDING_MODEL=text-embedding-3-small
+```
+
+Example:
+
+```env
+RAG_PROFILE=semantic_local
+```
+
+When **`RAG_PROFILE`** is empty, individual env vars below apply (unchanged behavior).
+
+**Validation:** **`RAG_PROFILE`** is checked when **`AppSettings`** loads (startup / first **`get_settings()`**). Unknown profile names raise a **Pydantic validation error** immediately. **`RAG_STRATEGY`** is **not** validated at settings load—invalid values still produce a **`ToolError`** in **`retrieve_context`** and fall back to **`mock`** (useful with **`RAG_PROFILE=custom`** for manual tuning).
+
+**Recommended use:**
+
+- Presets: set **`RAG_PROFILE`** (`mock`, `policy_only`, `approved_examples`, `semantic_local`, `semantic_pgvector_16`, `semantic_pgvector` for pgvector smoke/staging).
+- Manual tuning: **`RAG_PROFILE=custom`** plus **`RAG_STRATEGY`**, **`RAG_TOP_K`**, and **`EMBEDDING_*`**.
+
+Environment variables (mapped to **`AppSettings`**):
+
+- **`RAG_PROFILE`** → **`rag_profile`**: optional preset (see table above); validated at settings load.
+- **`RAG_STRATEGY`** → **`rag_strategy`**: controls how **`retrieve_context`** loads **`rag_documents`** (used when no profile, or with **`custom`**); runtime fallback only.
+- **`RAG_TOP_K`** → **`rag_top_k`**: number of documents requested during workflow retrieval (default **5**; used when no profile, or with **`custom`**).
+- **`EMBEDDING_PROVIDER`** / **`EMBEDDING_MODEL`**: passed through to semantic retrieval and embedding calls.
+
+Strategy values:
+
+- **`mock`** (default): deterministic mock catalog (**unchanged** from earlier MVP steps).
+- **`semantic`**: cosine search over a **new in-memory store** built from **`default_vendor_ticket_documents`**, using **`embedding_provider`** / **`embedding_model`** (keep **`mock`** for no network).
+- **`policy_only`** / **`approved_examples`**: filter strategies over the mock catalog (**`provider="strategy"`** in **`RAGResult`**).
+- **Unknown values:** a **`ToolError`** is appended and retrieval **falls back to `mock`** so the node does not raise.
+- **Pgvector:** use **`RAG_PROFILE=semantic_pgvector`** or **`semantic_pgvector_16`** (not the default). Validate with **`make pg-eval`** and **`make pg-compare`** before wider rollout—see [Staging Retrieval Evaluation Runbook](#staging-retrieval-evaluation-runbook).
+
+## Retrieval Config Observability
+
+Each workflow run records **safe** retrieval metadata (no API keys or secrets):
+
+- **`POST /run-vendor-ticket`** responses include **`retrieval_summary`**: requested/effective strategy, provider, document count, **`top_k`**, embedding provider/model, and optional **`rag_profile`**.
+- **`audit_log`** entries for **`retrieve_context`** include **`requested_rag_strategy`**, **`effective_rag_strategy`**, **`rag_provider`**, **`rag_top_k`**, embedding fields, and **`rag_document_count`**.
+- **`tool_results.retrieve_for_workflow`** mirrors the same fields (legacy **`strategy`** / **`count`** / **`provider`** keys remain).
+
+Use this to debug **mock vs semantic** runs and **invalid-strategy fallbacks** (requested strategy shows the env value; effective strategy shows **`mock`** after fallback). Full RAG document bodies are **not** exposed in the API response.
+
+## Manual Smoke Test: Semantic RAG Vendor Ticket
+
+This smoke test verifies that the **vendor ticket** workflow uses **semantic RAG** through runtime configuration:
+
+**FastAPI → LangGraph → `retrieve_context` → `RAG_STRATEGY=semantic` → runtime in-memory vector store (bootstrap corpus) → prompt injection → LLM → human approval.**
+
+This section exercises **in-memory semantic** retrieval (**`RAG_STRATEGY=semantic`** or **`RAG_PROFILE=semantic_local`**): no Postgres. For **pgvector** smoke, use [PgVector Retrieval Profile Smoke Test](#pgvector-retrieval-profile-smoke-test) instead. Pinecone/Qdrant/Weaviate are out of scope.
+
+Recommended order: **0 → 1 → 2 → 3 → 4 → 5 → 6** (optional LangSmith: step 3).
+
+### 0. Preflight configuration check
+
+From the project root, validate **local** settings **before** installing or starting the server:
+
+```bash
+make config-check
+```
+
+This loads **`AppSettings`** from your **`.env`** (offline): catches invalid **`RAG_PROFILE`** early, does **not** call OpenAI, and does **not** print secrets.
+
+If **`config-check` fails:** fix **`.env`**, rerun **`make config-check`**, then continue—do **not** start **`uvicorn`** until it passes.
+
+### 1. Purpose
+
+Confirm end-to-end wiring: **`retrieve_context`** builds a fresh default **`InMemoryVectorStore`**, runs **`retrieve_for_workflow`** with **`SEMANTIC`**, injects scored **`rag_documents`** into **`build_vendor_ticket_prompt`**, and still ends in **awaiting approval** with **no outbound send**.
+
+### 2. Install and configure
+
+Install dependencies:
+
+```bash
+cd inchand_ai
+pip install -e ".[dev]"
+```
+
+Ensure **`.env`** includes (at minimum for semantic RAG with mock embeddings):
+
+  ```env
+  RAG_STRATEGY=semantic
+  RAG_TOP_K=5
+  EMBEDDING_PROVIDER=mock
+  EMBEDDING_MODEL=mock-embedding-small
+  ```
+
+- **LLM** can be either:
+
+  ```env
+  LLM_PROVIDER=mock
+  LLM_MODEL=mock-vendor-ticket-drafter
+  ```
+
+  or, if you are manually testing **real** generation (optional; requires a key in the environment, never in git):
+
+  ```env
+  LLM_PROVIDER=openai
+  LLM_MODEL=gpt-4.1-mini
+  OPENAI_API_KEY=your_key
+  ```
+
+Re-run preflight after editing **`.env`**:
+
+```bash
+make config-check
+```
+
+### 3. Optional LangSmith
+
+```env
+LANGSMITH_TRACING=true
+LANGSMITH_ENDPOINT=https://eu.api.smith.langchain.com
+LANGSMITH_API_KEY=your_langsmith_key
+LANGSMITH_PROJECT=inchand-ai-commerce-mvp
+```
+
+### 4. Export environment and start FastAPI
+
+From the project root:
+
+```bash
+set -a && source .env && set +a && PYTHONPATH=. python3.11 -m uvicorn app.api.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+### 5. Trigger the workflow
+
+```bash
+curl -s -X POST "http://127.0.0.1:8000/run-vendor-ticket" \
+  -H "Content-Type: application/json" \
+  -d '{"user_input":"سلام، تسویه من با فاکتور فروش هم‌خوان نیست و نیاز به بررسی مالی دارم.","ticket_id":"t-semantic-rag-smoke-001"}' \
+  | python3.11 -m json.tool
+```
+
+**Optional helper:** with the server running and **`RAG_STRATEGY=semantic`** already exported (e.g. after `set -a && source .env && set +a` in the same shell as the server):
+
+```bash
+make smoke-semantic
+# or: ./scripts/smoke_semantic_rag_vendor_ticket.sh
+```
+
+The script runs **`make config-check`**-equivalent preflight (**`scripts/check_config.py`**) before **`curl`**—no API keys printed, no **`.env`** auto-sourced. **`make config-check`** is still recommended before **`uvicorn`**. The script **fails fast** if preflight or **`RAG_STRATEGY`** checks fail. Override the base URL with **`BASE_URL`** if needed.
+
+### 6. Inspect the response
+
+Parse the JSON and confirm:
+
+- **`workflow_type`** is **`"vendor_ticket"`**
+- **`workflow_status`** is **`"awaiting_approval"`** on the successful path
+- **`approval_status`** is **`"required"`**
+- **`human_approval_required`** is **`true`**
+- **`errors`** is **`[]`**
+- **`tool_results.retrieve_for_workflow.strategy`** is **`"semantic"`**
+- **`tool_results.retrieve_for_workflow.provider`** is **`"semantic"`**
+- **`specialist_output.evidence`** contains a line starting with **`rag_document_count=`**
+- **`specialist_output.evidence`** contains a line starting with **`rag_sources=`**
+- **`retrieved_context.rag_documents`** (or **`rag_sources`**) should include **semantically relevant** support/policy snippets from the bootstrap corpus (titles and `source_type` such as **`policy`**, **`approved_pattern`**, **`style_guide`**)
+- When **`LLM_PROVIDER=openai`**, the injected RAG block in the prompt should **influence draft quality** versus running without that context; with **`mock`**, the draft remains deterministic placeholder text but the retrieval path is still validated
+
+### 7. LangSmith checks (if enabled)
+
+- In the LangSmith UI, open the project from **`LANGSMITH_PROJECT`**.
+- Find a run named **`run_vendor_ticket_demo`**; confirm there is **no crash** and the trace completes.
+- Cross-check HTTP JSON **`tool_results.retrieve_for_workflow`** for **`strategy`** / **`provider`** **`semantic`** and **`specialist_output.evidence`** for RAG counts/sources so the run reflects the **semantic RAG** path.
+
+### 8. Safety
+
+- Do **not** use raw **production** ticket exports until **anonymization** and policy sign-off.
+- Do **not** send the generated draft to a **real vendor** inbox or ticket system from this smoke test.
+- **Human approval remains required** before any real send in product flows.
+
 ## Manual Smoke Test: OpenAI Vendor Ticket Draft
 
 This is a **manual, local-only** check that the FastAPI → LangGraph → `generate_text` OpenAI path returns a real draft while **human approval** still gates anything outbound. **Do not** run against raw production ticket exports; **do not** send the model output to a real vendor from this smoke path.
+
+Recommended order: **0 → 1 → 2 → 3 → 4 → 5** (optional LangSmith: step 6).
+
+### 0. Preflight configuration check
+
+From the project root:
+
+```bash
+make config-check
+```
+
+Validates **local** **`.env`** / **`AppSettings`** before startup (invalid **`RAG_PROFILE`** fails fast; no OpenAI calls; no secrets printed).
+
+If **`config-check` fails:** fix **`.env`**, rerun **`make config-check`**, then continue—only start **`uvicorn`** after it passes.
 
 ### 1. Preconditions
 
@@ -133,7 +1085,9 @@ cd inchand_ai
 pip install -e ".[dev]"
 ```
 
-### 3. Run FastAPI
+Re-run **`make config-check`** after changing **`.env`**.
+
+### 3. Export environment and start FastAPI
 
 From the project root (so `app` imports resolve):
 
@@ -152,12 +1106,13 @@ curl -s -X POST "http://127.0.0.1:8000/run-vendor-ticket" \
 **Optional helper:** with the server already running and **`OPENAI_API_KEY` exported** in your shell (after sourcing `.env` in that same shell), you can run:
 
 ```bash
-./scripts/smoke_openai_vendor_ticket.sh
+make smoke-openai
+# or: ./scripts/smoke_openai_vendor_ticket.sh
 ```
 
-The script **does not** embed keys; it fails fast if `OPENAI_API_KEY` is unset and calls the same `curl` + `json.tool` pipeline. Override the base URL with `BASE_URL` if needed.
+The script enforces the same offline config preflight before **`curl`** (see semantic smoke above). **`make config-check`** before **`uvicorn`** is still recommended. The script **does not** embed keys; it fails fast if preflight fails or **`OPENAI_API_KEY`** is unset. Override the base URL with **`BASE_URL`** if needed.
 
-### 5. Expected response checks
+### 5. Inspect the response
 
 Parse the JSON and confirm:
 
@@ -186,5 +1141,5 @@ Parse the JSON and confirm:
 
 - Mock tools and fixtures before real integrations.
 - LLM calls are opt-in via `LLM_PROVIDER` (`mock` by default); use OpenAI only with approved keys and data handling.
-- No real database or RAG until explicitly introduced.
+- Default path: mock tools, in-memory/mock RAG, no Postgres in CI. Pgvector RAG is opt-in, staging-oriented, and manually evaluated—not the production default.
 - No ticket reply sending or other destructive side effects in the MVP path.

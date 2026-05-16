@@ -1,0 +1,18 @@
+# Local development only. Never use these credentials in production.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: inchand_pgvector
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: inchand_ai
+      POSTGRES_USER: inchand
+      POSTGRES_PASSWORD: inchand_dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - inchand_pgvector_data:/var/lib/postgresql/data
+
+volumes:
+  inchand_pgvector_data:

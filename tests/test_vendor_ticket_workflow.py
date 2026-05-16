@@ -5,7 +5,12 @@ from __future__ import annotations
 import uuid
 
 from app.graph.main_graph import run_vendor_ticket_demo
-from app.nodes.common import normalize_request, retrieve_context, risk_and_approval_decision, validate_output
+from app.nodes.common import (
+    normalize_request,
+    retrieve_context,
+    risk_and_approval_decision,
+    validate_output,
+)
 from app.schemas.workflow import ApprovalStatus, EntityType, WorkflowStatus, WorkflowType
 from app.state.commerce_state import CommerceAIState
 
@@ -71,6 +76,17 @@ def test_vendor_ticket_workflow_happy_path() -> None:
     assert any("llm_provider=mock" in line for line in evidence)
     assert not any("llm_digest=None" in line for line in evidence)
     assert any(line.startswith("llm_digest=") for line in evidence)
+
+    assert any(line.startswith("rag_document_count=") for line in evidence)
+    rag_count_line = next(line for line in evidence if line.startswith("rag_document_count="))
+    assert rag_count_line == "rag_document_count=5"
+    rag_sources_line = next(line for line in evidence if line.startswith("rag_sources="))
+    assert rag_sources_line == "rag_sources=approved_pattern,policy,style_guide"
+
+    vt_audit = next(
+        entry for entry in state["audit_log"] if entry.node_name == "vendor_ticket_node"
+    )
+    assert vt_audit.metadata.get("rag_document_count") == 5
 
     tools = state["tool_results"]
     assert "get_ticket" in tools

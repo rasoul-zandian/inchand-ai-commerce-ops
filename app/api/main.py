@@ -34,15 +34,48 @@ class VendorTicketRunResponse(BaseModel):
     final_response: str | None
     specialist_output: dict[str, Any]
     tool_results: dict[str, Any]
+    retrieval_summary: dict[str, Any] = Field(default_factory=dict)
     errors: list[dict[str, Any]] = Field(default_factory=list)
     audit_log: list[dict[str, Any]] = Field(default_factory=list)
 
 
+_RETRIEVAL_SUMMARY_KEYS = (
+    "requested_strategy",
+    "effective_strategy",
+    "provider",
+    "count",
+    "top_k",
+    "embedding_provider",
+    "embedding_model",
+    "rag_profile",
+    "vector_store_provider",
+    "pgvector_table",
+    "pgvector_dimensions",
+)
+
+
+def _retrieval_summary_from_tool_results(tool_results: dict[str, Any]) -> dict[str, Any]:
+    """Build a safe, non-secret retrieval summary for API responses."""
+    rwf = tool_results.get("retrieve_for_workflow")
+    if not isinstance(rwf, dict) or not rwf:
+        return {}
+    summary = {key: rwf[key] for key in _RETRIEVAL_SUMMARY_KEYS if key in rwf}
+    if "effective_strategy" not in summary and "strategy" in rwf:
+        summary["effective_strategy"] = rwf["strategy"]
+    if "requested_strategy" not in summary and "strategy" in rwf:
+        summary["requested_strategy"] = rwf["strategy"]
+    return summary
+
+
 def _serialize_state(state: CommerceAIState) -> VendorTicketRunResponse:
-    errors = [e.model_dump(mode="json") if isinstance(e, ToolError) else dict(e) for e in state["errors"]]
-    audit_log = [
-        a.model_dump(mode="json") if isinstance(a, AuditLogEntry) else dict(a) for a in state["audit_log"]
+    errors = [
+        e.model_dump(mode="json") if isinstance(e, ToolError) else dict(e) for e in state["errors"]
     ]
+    audit_log = [
+        a.model_dump(mode="json") if isinstance(a, AuditLogEntry) else dict(a)
+        for a in state["audit_log"]
+    ]
+    tool_results = dict(state.get("tool_results") or {})
     return VendorTicketRunResponse(
         request_id=state["request_id"],
         session_id=state["session_id"],
@@ -53,7 +86,8 @@ def _serialize_state(state: CommerceAIState) -> VendorTicketRunResponse:
         recommended_action=state["recommended_action"],
         final_response=state["final_response"],
         specialist_output=dict(state.get("specialist_output") or {}),
-        tool_results=dict(state.get("tool_results") or {}),
+        tool_results=tool_results,
+        retrieval_summary=_retrieval_summary_from_tool_results(tool_results),
         errors=errors,
         audit_log=audit_log,
     )

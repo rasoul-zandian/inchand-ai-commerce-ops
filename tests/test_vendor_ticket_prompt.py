@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from app.prompts.vendor_ticket import build_vendor_ticket_prompt
+from app.rag.types import RAGDocument
 
 
 def test_build_vendor_ticket_prompt_structure() -> None:
@@ -48,3 +49,112 @@ def test_build_vendor_ticket_prompt_user_includes_context() -> None:
     assert "نام فروشنده" in user
     assert "تعداد نمونه‌های پاسخ تأییدشدهٔ مشابه در داده: 5" in user
     assert "(خلاصه‌ای در دسترس نیست)" in user
+    assert "اسناد و سیاست‌های بازیابی‌شده:" in user
+
+
+def test_build_vendor_ticket_prompt_includes_rag_section_with_documents() -> None:
+    docs = [
+        RAGDocument(
+            document_id="d1",
+            title="عنوان سند",
+            content="متن کوتاه سیاست.",
+            source_type="policy",
+            score=0.91,
+            metadata={},
+        )
+    ]
+    messages = build_vendor_ticket_prompt(
+        ticket_subject="س",
+        ticket_body="ب",
+        vendor_name="ف",
+        policy_summary="پ",
+        previous_cases_count=0,
+        rag_documents=docs,
+    )
+    user = messages[1].content
+    assert "اسناد و سیاست‌های بازیابی‌شده:" in user
+    assert "[سند 1]" in user
+    assert "عنوان: عنوان سند" in user
+    assert "نوع: policy" in user
+    assert "امتیاز شباهت: 0.91" in user
+    assert "متن کوتاه سیاست." in user
+
+
+def test_build_vendor_ticket_prompt_empty_rag_documents_shows_fallback() -> None:
+    messages = build_vendor_ticket_prompt(
+        ticket_subject="س",
+        ticket_body="ب",
+        vendor_name="ف",
+        policy_summary="پ",
+        previous_cases_count=0,
+        rag_documents=[],
+    )
+    user = messages[1].content
+    assert "اسناد و سیاست‌های بازیابی‌شده:" in user
+    assert "(سندی بازیابی نشد)" in user
+
+
+def test_build_vendor_ticket_prompt_truncates_long_rag_content() -> None:
+    long_body = "X" * 600
+    messages = build_vendor_ticket_prompt(
+        ticket_subject="س",
+        ticket_body="ب",
+        vendor_name="ف",
+        policy_summary="پ",
+        previous_cases_count=0,
+        rag_documents=[
+            RAGDocument(
+                document_id="d-long",
+                title="طولانی",
+                content=long_body,
+                source_type="policy",
+                score=None,
+                metadata={},
+            )
+        ],
+    )
+    user = messages[1].content
+    assert "…" in user
+    assert user.count("X") == 500
+
+
+def test_build_vendor_ticket_prompt_score_formatting_when_present() -> None:
+    messages = build_vendor_ticket_prompt(
+        ticket_subject="س",
+        ticket_body="ب",
+        vendor_name="ف",
+        policy_summary="پ",
+        previous_cases_count=0,
+        rag_documents=[
+            RAGDocument(
+                document_id="d",
+                title="تی",
+                content="محتوا",
+                source_type="approved_pattern",
+                score=0.42,
+                metadata={},
+            )
+        ],
+    )
+    assert "امتیاز شباهت: 0.42" in messages[1].content
+
+
+def test_build_vendor_ticket_prompt_no_score_line_when_score_absent() -> None:
+    messages = build_vendor_ticket_prompt(
+        ticket_subject="س",
+        ticket_body="ب",
+        vendor_name="ف",
+        policy_summary="پ",
+        previous_cases_count=0,
+        rag_documents=[
+            RAGDocument(
+                document_id="d",
+                title="تی",
+                content="محتوا",
+                source_type="style_guide",
+                score=None,
+                metadata={},
+            )
+        ],
+    )
+    assert "امتیاز شباهت" not in messages[1].content

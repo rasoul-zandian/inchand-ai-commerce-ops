@@ -1,0 +1,47 @@
+{
+  "lock_version": "1",
+  "corpus_name": "vendor_ticket",
+  "manifest_version": "1",
+  "eval_version": "1",
+  "files": [
+    {
+      "path": "approved_patterns/settlement-reply.txt",
+      "sha256": "a583a47d3e08c43e605dedd925f519ed1a41ebc72d4ccb3e8062462df514935c",
+      "size_bytes": 344
+    },
+    {
+      "path": "eval_cases.json",
+      "sha256": "6ca0e22665606fe249f8d64c5c2045ff339a012672b747c9606f68dfd90f9a9f",
+      "size_bytes": 7655
+    },
+    {
+      "path": "manifest.json",
+      "sha256": "adf6274fa19facbfd3997f84ff9d727829a6a88b8ed3792431f9328d900ce2e5",
+      "size_bytes": 1646
+    },
+    {
+      "path": "policies/escalation.txt",
+      "sha256": "ab3defaea8e291888f90b46e2c606920cd253cb20e37310aab3cfb32d40f88f9",
+      "size_bytes": 156
+    },
+    {
+      "path": "policies/financial-adjustment.txt",
+      "sha256": "c3b440cc8bcf5fba16fcca9305b33da19af6c76d81d64299ed95933b8deed867",
+      "size_bytes": 224
+    },
+    {
+      "path": "policies/seller-support.txt",
+      "sha256": "5d1ef8be5ae22775d38989b84ae334800615b50bacf20933ff7298d4fa16dbaa",
+      "size_bytes": 205
+    },
+    {
+      "path": "style_guides/tone.txt",
+      "sha256": "865deb5d9cd08375ac041e8ac0abb004cae454af24877ef37bbb0b69cafef519",
+      "size_bytes": 151
+    }
+  ],
+  "metadata": {
+    "generated_by": "write_corpus_lockfile",
+    "checked_file_count": 7
+  }
+}

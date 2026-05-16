@@ -8,6 +8,7 @@ from app.config import get_settings
 from app.llm import generate_text
 from app.llm.types import LLMResponse
 from app.prompts.vendor_ticket import build_vendor_ticket_prompt
+from app.rag.types import RAGDocument
 from app.state.commerce_state import CommerceAIState
 
 from .common import _append_audit, _state_dict
@@ -26,6 +27,25 @@ def _policy_summary_text(retrieved_context: dict[str, Any]) -> str:
     if policy_ctx is None:
         return ""
     return str(policy_ctx)
+
+
+def _parse_rag_documents(raw: Any) -> list[RAGDocument]:
+    """Coerce ``retrieved_context['rag_documents']`` entries to ``RAGDocument``."""
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        return []
+    out: list[RAGDocument] = []
+    for item in raw:
+        if isinstance(item, RAGDocument):
+            out.append(item)
+            continue
+        if isinstance(item, dict):
+            try:
+                out.append(RAGDocument.model_validate(item))
+            except Exception:
+                continue
+    return out
 
 
 def _llm_evidence(response: LLMResponse) -> list[str]:
@@ -57,12 +77,15 @@ def vendor_ticket_node(state: CommerceAIState) -> CommerceAIState:
     previous_cases = ctx.get("previous_cases") or []
     previous_cases_count = len(previous_cases) if isinstance(previous_cases, list) else 0
 
+    rag_documents = _parse_rag_documents(ctx.get("rag_documents"))
+
     messages = build_vendor_ticket_prompt(
         ticket_subject=ticket_subject,
         ticket_body=ticket_body,
         vendor_name=vendor_name,
         policy_summary=policy_summary,
         previous_cases_count=previous_cases_count,
+        rag_documents=rag_documents,
     )
 
     settings = get_settings()
@@ -75,17 +98,25 @@ def vendor_ticket_node(state: CommerceAIState) -> CommerceAIState:
     confidence = 0.82
     risk = 0.34
 
+    rag_count = len(rag_documents)
+    evidence_lines: list[str] = [
+        f"ticket_subject={ticket_subject}",
+        f"vendor_name={vendor_name}",
+        "policy_context_used=true",
+        f"rag_document_count={rag_count}",
+    ]
+    if rag_documents:
+        unique_sources = sorted({doc.source_type for doc in rag_documents})
+        evidence_lines.append(f"rag_sources={','.join(unique_sources)}")
+
+    evidence_lines.extend(_llm_evidence(response))
+
     data["specialist_output"] = {
         "draft_response": response.content,
         "detected_intent": "billing_discrepancy",
         "confidence_score": confidence,
         "risk_score": risk,
-        "evidence": [
-            f"ticket_subject={ticket_subject}",
-            f"vendor_name={vendor_name}",
-            "policy_context_used=true",
-            *_llm_evidence(response),
-        ],
+        "evidence": evidence_lines,
         "llm_provider": response.provider,
         "llm_model": response.model,
         "llm_metadata": response.metadata,
@@ -103,6 +134,7 @@ def vendor_ticket_node(state: CommerceAIState) -> CommerceAIState:
         "detected_intent": "billing_discrepancy",
         "llm_provider": response.provider,
         "llm_model": response.model,
+        "rag_document_count": rag_count,
     }
     response_id = response.metadata.get("response_id")
     if response_id:

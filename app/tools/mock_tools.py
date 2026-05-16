@@ -11,10 +11,7 @@ def get_ticket(ticket_id: str) -> dict[str, Any]:
     return {
         "id": ticket_id,
         "subject": "مشکل در تسویه فروش هفتگی",
-        "body": (
-            "سلام، مبلغ تسویه این هفته با فاکتور فروش هم‌خوانی ندارد. "
-            "لطفاً بررسی کنید."
-        ),
+        "body": ("سلام، مبلغ تسویه این هفته با فاکتور فروش هم‌خوانی ندارد. لطفاً بررسی کنید."),
         "status": "open",
         "vendor_id": "demo-vendor-001",
     }
@@ -67,7 +64,8 @@ def search_previous_ticket_responses(query: str) -> list[dict[str, Any]]:
             "case_id": f"CASE-1002-{query_key}",
             "detected_intent": "payout_delay",
             "response_summary": (
-                f"نمونه مرتبط با پرسش «{safe_query[:40]}»: اطلاع‌رسانی تأخیر احتمالی و مسیر پیگیری داخلی."
+                f"نمونه مرتبط با پرسش «{safe_query[:40]}»: "
+                "اطلاع‌رسانی تأخیر احتمالی و مسیر پیگیری داخلی."
             ),
             "approved": True,
         },

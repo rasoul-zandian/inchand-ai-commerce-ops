@@ -9,9 +9,6 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langsmith import traceable
 
-from app.schemas.workflow import ApprovalStatus, EntityType, WorkflowStatus, WorkflowType
-from app.state.commerce_state import CommerceAIState
-
 from app.nodes.common import (
     normalize_request,
     persist_trace,
@@ -21,6 +18,8 @@ from app.nodes.common import (
     validate_output,
 )
 from app.nodes.vendor_ticket import vendor_ticket_node
+from app.schemas.workflow import ApprovalStatus, EntityType, WorkflowStatus, WorkflowType
+from app.state.commerce_state import CommerceAIState
 
 
 def build_graph() -> CompiledStateGraph[CommerceAIState]:

@@ -1,6 +1,6 @@
 """Core workflow enums and Pydantic schemas (no business logic)."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
@@ -40,7 +40,7 @@ class ApprovalStatus(StrEnum):
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class AuditLogEntry(BaseModel):

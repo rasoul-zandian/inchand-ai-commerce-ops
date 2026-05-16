@@ -1,0 +1,53 @@
+{
+  "manifest_version": "1",
+  "workflow_type": "vendor_ticket",
+  "locale": "fa-IR",
+  "documents": [
+    {
+      "document_id": "bootstrap-vt-policy-seller-support-001",
+      "source_type": "policy",
+      "path": "policies/seller-support.txt",
+      "title": "سیاست پاسخ‌گویی به تیکت فروشندگان",
+      "metadata": {
+        "domain": "seller_support"
+      }
+    },
+    {
+      "document_id": "bootstrap-vt-policy-financial-adjustment-002",
+      "source_type": "policy",
+      "path": "policies/financial-adjustment.txt",
+      "title": "سیاست تعدیل مالی و بازپرداخت",
+      "metadata": {
+        "domain": "finance"
+      }
+    },
+    {
+      "document_id": "bootstrap-vt-approved-reply-settlement-003",
+      "source_type": "approved_pattern",
+      "path": "approved_patterns/settlement-reply.txt",
+      "title": "الگوی پاسخ تأییدشده برای ابهام تسویه و صورتحساب",
+      "metadata": {
+        "domain": "seller_support",
+        "intent": "billing_discrepancy"
+      }
+    },
+    {
+      "document_id": "bootstrap-vt-policy-escalation-004",
+      "source_type": "policy",
+      "path": "policies/escalation.txt",
+      "title": "زمان و شرایط تشدید (Escalation) تیکت",
+      "metadata": {
+        "domain": "operations"
+      }
+    },
+    {
+      "document_id": "bootstrap-vt-style-guide-tone-005",
+      "source_type": "style_guide",
+      "path": "style_guides/tone.txt",
+      "title": "لحن استاندارد ارتباط با فروشنده",
+      "metadata": {
+        "domain": "communications"
+      }
+    }
+  ]
+}

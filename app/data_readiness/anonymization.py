@@ -17,7 +17,7 @@ _LONG_DIGITS_PATTERN = re.compile(r"\b\d{10,}\b")
 
 def hash_identifier(value: str, *, salt: str = "inchand-local-dev") -> str:
     """Return a short deterministic SHA-256 digest prefix (hex, first 16 chars)."""
-    payload = f"{salt}:{value}".encode("utf-8")
+    payload = f"{salt}:{value}".encode()
     return hashlib.sha256(payload).hexdigest()[:16]
 
 
@@ -37,9 +37,7 @@ def mask_sensitive_text(text: str) -> str:
 def anonymize_ticket_record(record: VendorTicketRecord) -> VendorTicketRecord:
     """Return a new ticket record with hashed vendor id field, masked text fields, and flag."""
     new_metadata = {**record.metadata, "anonymized": True}
-    vendor_hashed = (
-        hash_identifier(record.vendor_id_hash) if record.vendor_id_hash else None
-    )
+    vendor_hashed = hash_identifier(record.vendor_id_hash) if record.vendor_id_hash else None
     return record.model_copy(
         update={
             "vendor_id_hash": vendor_hashed,

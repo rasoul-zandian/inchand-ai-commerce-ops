@@ -6,10 +6,20 @@ import uuid
 from collections.abc import Sequence
 from typing import Any, cast
 
+from app.config import get_settings
+from app.rag.bootstrap import build_default_vendor_ticket_vector_store
+from app.rag.config import build_retrieval_config_from_settings
+from app.rag.strategy import RetrievalStrategyName, retrieve_for_workflow
+from app.rag.types import RAGResult
+from app.rag.vector_store_factory import (
+    build_vector_store_config_from_settings,
+    create_vector_store,
+)
 from app.schemas.workflow import (
     ApprovalStatus,
     AuditLogEntry,
     EntityType,
+    RAGSource,
     ToolError,
     WorkflowStatus,
     WorkflowType,
@@ -56,7 +66,10 @@ def normalize_request(state: CommerceAIState) -> CommerceAIState:
     data = _state_dict(state)
     request_id = (data.get("request_id") or "").strip() or str(uuid.uuid4())
     session_raw = data.get("session_id")
-    session_id = session_raw if (session_raw is not None and str(session_raw).strip()) else request_id
+    if session_raw is not None and str(session_raw).strip():
+        session_id = session_raw
+    else:
+        session_id = request_id
 
     data["request_id"] = request_id
     data["session_id"] = session_id
@@ -96,28 +109,162 @@ def retrieve_context(state: CommerceAIState) -> CommerceAIState:
     policy = search_support_policy(query)
     previous_cases = search_previous_ticket_responses(query)
 
+    settings = get_settings()
+    retrieval_config = build_retrieval_config_from_settings(settings)
+    raw_strategy = retrieval_config.strategy
+    coerced = retrieval_config.to_strategy_name()
+    workflow_type = str(data.get("workflow_type") or "unknown")
+    ep = retrieval_config.embedding_provider
+    em = retrieval_config.embedding_model
+    top_k = retrieval_config.top_k
+
+    def _mock_fallback_result() -> RAGResult:
+        return retrieve_for_workflow(
+            query,
+            workflow_type=workflow_type,
+            strategy=RetrievalStrategyName.MOCK,
+            top_k=top_k,
+            vector_store=None,
+            embedding_provider=ep,
+            embedding_model=em,
+        )
+
+    if coerced is None:
+        data["errors"] = _append_errors(
+            data["errors"],
+            ToolError(
+                tool_name="retrieve_context",
+                error_type="rag_strategy_error",
+                message=(
+                    f"Unsupported RAG strategy '{raw_strategy.strip()}'; falling back to 'mock'."
+                ),
+                retryable=False,
+            ),
+        )
+        rag_result = _mock_fallback_result()
+    elif coerced is RetrievalStrategyName.SEMANTIC:
+        vector_store_provider = retrieval_config.normalized_vector_store_provider()
+        try:
+            if vector_store_provider == "pgvector":
+                store = create_vector_store(build_vector_store_config_from_settings(settings))
+            else:
+                store = build_default_vendor_ticket_vector_store(
+                    embedding_provider=ep,
+                    embedding_model=em,
+                )
+            rag_result = retrieve_for_workflow(
+                query,
+                workflow_type=workflow_type,
+                strategy=RetrievalStrategyName.SEMANTIC,
+                top_k=top_k,
+                vector_store=store,
+                embedding_provider=ep,
+                embedding_model=em,
+            )
+        except Exception as exc:  # noqa: BLE001 — defensive fallback for demo store / retrieval
+            data["errors"] = _append_errors(
+                data["errors"],
+                ToolError(
+                    tool_name="retrieve_context",
+                    error_type="rag_strategy_error",
+                    message=f"Semantic RAG strategy failed ({exc!r}); falling back to 'mock'.",
+                    retryable=True,
+                ),
+            )
+            rag_result = _mock_fallback_result()
+    else:
+        rag_result = retrieve_for_workflow(
+            query,
+            workflow_type=workflow_type,
+            strategy=coerced,
+            top_k=top_k,
+            vector_store=None,
+            embedding_provider=ep,
+            embedding_model=em,
+        )
+
     data["ticket_id"] = ticket_id
     data["vendor_id"] = vendor_id
+
+    rag_documents = [doc.model_dump() for doc in rag_result.documents]
+    data["rag_sources"] = [
+        RAGSource(
+            source_type=doc.source_type,
+            title=doc.title,
+            chunk_id=doc.document_id,
+            score=doc.score,
+            metadata=dict(doc.metadata),
+        )
+        for doc in rag_result.documents
+    ]
 
     data["retrieved_context"] = {
         "ticket": ticket,
         "vendor": vendor,
         "policy_context": policy,
         "previous_cases": previous_cases,
+        "rag_documents": rag_documents,
     }
+
+    effective_strategy = rag_result.metadata.get("strategy", "mock")
+    requested_strategy = retrieval_config.normalized_strategy()
+    rag_document_count = len(rag_result.documents)
+    rag_profile = retrieval_config.profile
+    vector_store_provider_obs = retrieval_config.normalized_vector_store_provider()
+    pgvector_table_obs: str | None = None
+    pgvector_dimensions_obs: int | None = None
+    if vector_store_provider_obs == "pgvector":
+        pgvector_table_obs = settings.pgvector_table
+        pgvector_dimensions_obs = settings.pgvector_dimensions
 
     data["tool_results"] = {
         "get_ticket": {"ok": True, "ticket_id": ticket_id},
         "get_vendor_profile": {"ok": True, "vendor_id": vendor_id},
         "search_support_policy": {"ok": True},
         "search_previous_ticket_responses": {"ok": True, "count": len(previous_cases)},
+        "retrieve_documents": {
+            "ok": True,
+            "count": rag_document_count,
+            "provider": rag_result.provider,
+        },
+        "retrieve_for_workflow": {
+            "ok": True,
+            "strategy": effective_strategy,
+            "count": rag_document_count,
+            "provider": rag_result.provider,
+            "requested_strategy": requested_strategy,
+            "effective_strategy": effective_strategy,
+            "top_k": top_k,
+            "embedding_provider": ep,
+            "embedding_model": em,
+            "rag_profile": rag_profile,
+            "vector_store_provider": vector_store_provider_obs,
+            "pgvector_table": pgvector_table_obs,
+            "pgvector_dimensions": pgvector_dimensions_obs,
+        },
+    }
+
+    audit_metadata: dict[str, Any] = {
+        "ticket_id": ticket_id,
+        "vendor_id": vendor_id,
+        "requested_rag_strategy": requested_strategy,
+        "effective_rag_strategy": effective_strategy,
+        "rag_provider": rag_result.provider,
+        "rag_top_k": top_k,
+        "embedding_provider": ep,
+        "embedding_model": em,
+        "rag_document_count": rag_document_count,
+        "rag_profile": rag_profile,
+        "vector_store_provider": vector_store_provider_obs,
+        "pgvector_table": pgvector_table_obs,
+        "pgvector_dimensions": pgvector_dimensions_obs,
     }
 
     data["audit_log"] = _append_audit(
         data["audit_log"],
         node_name="retrieve_context",
-        message="Retrieved mock ticket, vendor, policy, and prior cases via tools.",
-        metadata={"ticket_id": ticket_id, "vendor_id": vendor_id},
+        message="Retrieved mock ticket, vendor, policy, prior cases, and RAG catalog documents.",
+        metadata=audit_metadata,
     )
     return cast(CommerceAIState, data)
 

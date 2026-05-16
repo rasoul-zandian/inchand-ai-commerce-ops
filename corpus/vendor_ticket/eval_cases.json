@@ -1,0 +1,207 @@
+{
+  "eval_version": "1",
+  "workflow_type": "vendor_ticket",
+  "locale": "fa-IR",
+  "cases": [
+    {
+      "case_id": "vt-settlement-discrepancy-001",
+      "query": "تسویه من با فاکتور فروش هم‌خوان نیست و نیاز به بررسی مالی دارم",
+      "expected_document_ids": [
+        "bootstrap-vt-approved-reply-settlement-003",
+        "bootstrap-vt-policy-financial-adjustment-002"
+      ],
+      "required_source_types": ["approved_pattern", "policy"],
+      "top_k": 5,
+      "metadata": {
+        "intent": "billing_discrepancy",
+        "category": "multi_document"
+      }
+    },
+    {
+      "case_id": "vt-tone-respectful-002",
+      "query": "لحن استاندارد و محترمانه؛ بدون اصطلاح تهدیدآمیز یا تضمین قطعی",
+      "expected_document_ids": ["bootstrap-vt-style-guide-tone-005"],
+      "required_source_types": ["style_guide"],
+      "top_k": 5,
+      "metadata": {
+        "intent": "respectful_reply",
+        "category": "single_document",
+        "near_miss_document_ids": ["bootstrap-vt-policy-seller-support-001"]
+      }
+    },
+    {
+      "case_id": "vt-escalation-sla-003",
+      "query": "تکرار شکایت و SLA داخلی و ارجاع تیکت به سطح بالاتر",
+      "expected_document_ids": ["bootstrap-vt-policy-escalation-004"],
+      "required_source_types": ["policy"],
+      "top_k": 5,
+      "metadata": {
+        "intent": "escalation_sla",
+        "category": "escalation",
+        "near_miss_document_ids": ["bootstrap-vt-policy-seller-support-001"]
+      }
+    },
+    {
+      "case_id": "vt-short-settlement-004",
+      "query": "تسویه اشتباه",
+      "expected_document_ids": [
+        "bootstrap-vt-approved-reply-settlement-003",
+        "bootstrap-vt-policy-financial-adjustment-002"
+      ],
+      "required_source_types": ["approved_pattern", "policy"],
+      "top_k": 5,
+      "metadata": {
+        "intent": "billing_discrepancy",
+        "category": "short_query"
+      }
+    },
+    {
+      "case_id": "vt-short-escalation-005",
+      "query": "ارجاع فوری تیکت به سطح بالاتر",
+      "expected_document_ids": ["bootstrap-vt-policy-escalation-004"],
+      "required_source_types": ["policy"],
+      "top_k": 5,
+      "metadata": {
+        "intent": "escalation_sla",
+        "category": "short_query",
+        "near_miss_document_ids": ["bootstrap-vt-policy-seller-support-001"]
+      }
+    },
+    {
+      "case_id": "vt-financial-indirect-006",
+      "query": "مبلغ واریزی با صورتحساب یکی نیست؛ مسیر رسمی مالی بدون وعده عدد قطعی",
+      "expected_document_ids": [
+        "bootstrap-vt-policy-financial-adjustment-002",
+        "bootstrap-vt-approved-reply-settlement-003"
+      ],
+      "required_source_types": ["policy", "approved_pattern"],
+      "top_k": 5,
+      "metadata": {
+        "intent": "billing_discrepancy",
+        "category": "ambiguous_phrasing"
+      }
+    },
+    {
+      "case_id": "vt-escalation-vague-007",
+      "query": "چند بار پیگیری کردم ولی پاسخ مناسب نگرفتم",
+      "expected_document_ids": [
+        "bootstrap-vt-policy-escalation-004",
+        "bootstrap-vt-policy-seller-support-001"
+      ],
+      "required_source_types": ["policy"],
+      "top_k": 5,
+      "metadata": {
+        "intent": "escalation_sla",
+        "category": "ambiguous_phrasing"
+      }
+    },
+    {
+      "case_id": "vt-conv-settlement-008",
+      "query": "سلام، فروشنده می‌گوید تسویه با فاکتور هم‌خوان نیست؛ می‌خواهم پاسخ محترمانه بدهم و شماره فاکتور و بازه زمانی بخواهم",
+      "expected_document_ids": [
+        "bootstrap-vt-approved-reply-settlement-003",
+        "bootstrap-vt-policy-seller-support-001"
+      ],
+      "required_source_types": ["approved_pattern", "policy"],
+      "top_k": 5,
+      "metadata": {
+        "intent": "billing_discrepancy",
+        "category": "conversational"
+      }
+    },
+    {
+      "case_id": "vt-policy-style-tone-009",
+      "query": "پاسخ محترمانه بدون تضمین قطعی و زبان رسمی به فروشنده",
+      "expected_document_ids": [
+        "bootstrap-vt-style-guide-tone-005",
+        "bootstrap-vt-policy-seller-support-001"
+      ],
+      "required_source_types": ["style_guide", "policy"],
+      "top_k": 5,
+      "metadata": {
+        "intent": "respectful_reply",
+        "category": "source_type_diversity"
+      }
+    },
+    {
+      "case_id": "vt-near-miss-autorefund-010",
+      "query": "به‌صورت خودکار مبلغ قطعی به فروشنده وعده داده نشود",
+      "expected_document_ids": ["bootstrap-vt-policy-financial-adjustment-002"],
+      "required_source_types": ["policy"],
+      "top_k": 5,
+      "metadata": {
+        "intent": "financial_policy",
+        "category": "near_miss",
+        "near_miss_document_ids": ["bootstrap-vt-policy-seller-support-001"]
+      }
+    },
+    {
+      "case_id": "vt-near-miss-settlement-wording-011",
+      "query": "در ابهام تسویه، فاکتور و بازه زمانی مشخص شود",
+      "expected_document_ids": [
+        "bootstrap-vt-policy-seller-support-001",
+        "bootstrap-vt-approved-reply-settlement-003"
+      ],
+      "required_source_types": ["policy", "approved_pattern"],
+      "top_k": 5,
+      "metadata": {
+        "intent": "billing_discrepancy",
+        "category": "near_miss",
+        "near_miss_document_ids": ["bootstrap-vt-policy-financial-adjustment-002"]
+      }
+    },
+    {
+      "case_id": "vt-single-approved-pattern-012",
+      "query": "همدلی و مدارک تکمیلی بدون ذکر عدد نهایی تا تأیید",
+      "expected_document_ids": ["bootstrap-vt-approved-reply-settlement-003"],
+      "required_source_types": ["approved_pattern"],
+      "top_k": 5,
+      "metadata": {
+        "intent": "billing_discrepancy",
+        "category": "single_document",
+        "near_miss_document_ids": [
+          "bootstrap-vt-policy-seller-support-001",
+          "bootstrap-vt-policy-financial-adjustment-002"
+        ]
+      }
+    },
+    {
+      "case_id": "vt-policy-financial-only-013",
+      "query": "تأیید واحد مالی قبل از تعدیل یا بازپرداخت",
+      "expected_document_ids": ["bootstrap-vt-policy-financial-adjustment-002"],
+      "required_source_types": ["policy"],
+      "top_k": 5,
+      "metadata": {
+        "intent": "financial_policy",
+        "category": "single_document",
+        "near_miss_document_ids": ["bootstrap-vt-policy-seller-support-001"]
+      }
+    },
+    {
+      "case_id": "vt-escalation-repeat-sla-014",
+      "query": "تکرار شکایت بعد از SLA — ارجاع به سطح بالاتر",
+      "expected_document_ids": [
+        "bootstrap-vt-policy-escalation-004",
+        "bootstrap-vt-policy-seller-support-001"
+      ],
+      "required_source_types": ["policy"],
+      "top_k": 5,
+      "metadata": {
+        "intent": "escalation_sla",
+        "category": "escalation_overlap"
+      }
+    },
+    {
+      "case_id": "vt-style-threat-avoid-015",
+      "query": "از اصطلاح تهدیدآمیز و تضمین قطعی پرهیز کنم",
+      "expected_document_ids": ["bootstrap-vt-style-guide-tone-005"],
+      "required_source_types": ["style_guide"],
+      "top_k": 5,
+      "metadata": {
+        "intent": "respectful_reply",
+        "category": "single_document",
+        "near_miss_document_ids": ["bootstrap-vt-policy-seller-support-001"]
+      }
+    }
+  ]
+}

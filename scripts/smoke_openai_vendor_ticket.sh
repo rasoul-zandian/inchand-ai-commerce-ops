@@ -5,6 +5,13 @@
 
 set -euo pipefail
 
+_root="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$_root"
+
+# shellcheck source=scripts/_smoke_config_preflight.sh
+source "${_root}/scripts/_smoke_config_preflight.sh"
+_smoke_run_config_preflight
+
 if [[ -z "${OPENAI_API_KEY:-}" ]]; then
   echo "ERROR: OPENAI_API_KEY is not set. Export it or run: set -a && source .env && set +a" >&2
   exit 1

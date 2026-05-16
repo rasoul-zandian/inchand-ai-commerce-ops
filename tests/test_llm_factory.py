@@ -1,7 +1,6 @@
 """Minimal checks for the LLM factory (mock + error paths; no network)."""
 
 import pytest
-
 from app.llm import LLMMessage, LLMResponse, generate_text
 
 

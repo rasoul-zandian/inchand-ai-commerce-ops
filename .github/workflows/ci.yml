@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Ruff lint
+        run: ruff check app tests scripts
+
+      - name: Ruff format check
+        run: ruff format --check app tests scripts
+
+      - name: Run pytest
+        env:
+          LLM_PROVIDER: mock
+          LLM_MODEL: mock-vendor-ticket-drafter
+          EMBEDDING_PROVIDER: mock
+          EMBEDDING_MODEL: mock-embedding-small
+          RAG_STRATEGY: mock
+          LANGSMITH_TRACING: "false"
+        run: pytest
+
+      - name: Corpus integrity checks
+        env:
+          LLM_PROVIDER: mock
+          LLM_MODEL: mock-vendor-ticket-drafter
+          EMBEDDING_PROVIDER: mock
+          EMBEDDING_MODEL: mock-embedding-small
+          RAG_STRATEGY: mock
+          LANGSMITH_TRACING: "false"
+        run: |
+          PYTHONPATH=. python3.11 scripts/check_corpus_integrity.py
+
+      - name: Corpus lockfile freshness
+        env:
+          LLM_PROVIDER: mock
+          LLM_MODEL: mock-vendor-ticket-drafter
+          EMBEDDING_PROVIDER: mock
+          EMBEDDING_MODEL: mock-embedding-small
+          RAG_STRATEGY: mock
+          LANGSMITH_TRACING: "false"
+        run: |
+          PYTHONPATH=. python3.11 scripts/check_corpus_lockfile_fresh.py

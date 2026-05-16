@@ -9,12 +9,16 @@ Description-Content-Type: text/markdown
 Requires-Dist: fastapi>=0.115
 Requires-Dist: langchain-core>=0.3
 Requires-Dist: langgraph>=0.2
+Requires-Dist: openai>=1.0
 Requires-Dist: pydantic>=2.6
+Requires-Dist: pydantic-settings>=2.0
+Requires-Dist: psycopg[binary]>=3.2
 Requires-Dist: sqlalchemy>=2.0
 Requires-Dist: uvicorn[standard]>=0.30
 Provides-Extra: dev
 Requires-Dist: pytest>=8.0; extra == "dev"
 Requires-Dist: pytest-asyncio>=0.24; extra == "dev"
+Requires-Dist: ruff>=0.8; extra == "dev"
 
 # Inchand AI — Commerce Operations Copilot (MVP)
 
@@ -56,8 +60,626 @@ Run tests (when tests exist):
 pytest
 ```
 
+## CI
+
+GitHub Actions runs:
+
+- `ruff check app tests scripts` (lint)
+- `ruff format --check app tests scripts` (formatting)
+- `pytest` (with mock providers only: no OpenAI, no LangSmith secrets, no DB)
+- `PYTHONPATH=. python3.11 scripts/check_corpus_integrity.py` to validate:
+  - corpus SHA-256 integrity inventory + committed lockfile
+  - manifest/eval consistency
+- `PYTHONPATH=. python3.11 scripts/check_corpus_lockfile_fresh.py` to ensure `corpus.lock.json` is not stale
+
+Corpus governance note: any change to `corpus/vendor_ticket/` must be accompanied by an intentional regeneration of `corpus/vendor_ticket/corpus.lock.json`.
+
+## Developer Commands
+
+From the project root, **`make ci`** runs the same offline checks as GitHub Actions (mock providers only—no OpenAI, no LangSmith secrets, no database):
+
+```bash
+make install       # pip install -e ".[dev]"
+make lint          # ruff check app tests scripts
+make format        # ruff format app tests scripts (writes changes)
+make format-check  # ruff format --check (CI-style, no writes)
+make test          # pytest with mock LLM/embeddings/RAG
+make corpus-check  # integrity inventory + corpus.lock.json + manifest/eval consistency
+make lockfile      # regenerate corpus/vendor_ticket/corpus.lock.json (after intentional edits)
+make lockfile-check # verify lockfile is fresh (does not rewrite the file)
+make config-check  # validate local .env / AppSettings (see Config validation)
+make ci            # lint, format-check, test, corpus-check, lockfile-check
+```
+
+**Manual smoke tests** (not part of **`make ci`**; require a **running local FastAPI** server and your current shell environment—**no** **`.env`** auto-sourcing):
+
+```bash
+make smoke-semantic   # semantic RAG path; scripts run config preflight first
+make smoke-openai     # OpenAI draft path; requires OPENAI_API_KEY in environment
+```
+
+- **`make smoke-semantic`**: expects **`RAG_STRATEGY=semantic`** or a compatible profile (e.g. **`RAG_PROFILE=semantic_local`**). Mock embeddings are fine; no OpenAI key required for retrieval validation.
+- **`make smoke-openai`**: requires **`OPENAI_API_KEY`** and typically **`LLM_PROVIDER=openai`** when exercising the real OpenAI adapter. Secrets are never printed by the smoke scripts.
+
+Run **`make config-check`** before **`uvicorn`**. Export env vars with **`set -a && source .env && set +a`** in the same shell as the server and smoke command.
+
+**When to regenerate the lockfile:** after you intentionally change corpus bodies, `manifest.json`, or `eval_cases.json`. Recommended flow:
+
+1. Edit corpus files under `corpus/vendor_ticket/`
+2. `make corpus-check` (confirm manifest/eval consistency and current inventory)
+3. `make lockfile` (writes new SHA-256 hashes to `corpus.lock.json`)
+4. Review the diff (corpus + lockfile together)
+5. Commit both the corpus changes and the updated lockfile
+
+If **`make lockfile-check`** or CI fails with a stale lockfile message, run **`make lockfile`**, review the diff, and commit the updated `corpus.lock.json` intentionally.
+
+### Config validation
+
+**`make config-check`** validates your **local** `.env` / environment by loading **`AppSettings`** (no network, no LangSmith, no workflow run, no FastAPI startup). It prints only **safe operational fields**—never API keys or other secrets. Use it before **`uvicorn`**, manual workflow runs, and the [smoke tests](#manual-smoke-test-semantic-rag-vendor-ticket) below. **`make ci`** does **not** read your local `.env`; it injects deterministic mock env vars—**`config-check`** is for developer-machine validation only.
+
+```bash
+make config-check
+```
+
+Example success output:
+
+```text
+config check: passed
+  environment=development
+  llm_provider=mock
+  embedding_provider=mock
+  rag_profile=semantic_local
+  rag_strategy=mock
+  rag_top_k=5
+```
+
+Example failure (invalid profile):
+
+```text
+config check: failed
+  rag_profile: Invalid RAG_PROFILE 'pinecone'; allowed values: mock, policy_only, ...
+```
+
+**`make ci`** vs **`make config-check`:**
+
+| Command | Purpose |
+|---------|---------|
+| **`make ci`** | Deterministic offline CI checks (mock env vars injected; lint, tests, corpus governance) |
+| **`make config-check`** | Validate **your** local runtime configuration as loaded from `.env` |
+
+Equivalent manual commands:
+
+```bash
+ruff check app tests scripts
+ruff format --check app tests scripts
+pytest
+PYTHONPATH=. python3.11 scripts/check_corpus_integrity.py
+PYTHONPATH=. python3.11 scripts/check_corpus_lockfile_fresh.py
+PYTHONPATH=. python3.11 scripts/regenerate_corpus_lockfile.py
+```
+
+## LangSmith Observability
+
+[LangSmith](https://smith.langchain.com/) is used to trace LangGraph workflow execution (runs, latency, and nested steps) so you can debug and monitor the copilot without changing business logic in the graph.
+
+**Enable tracing**
+
+1. Copy `.env.example` to `.env` (keep `.env` out of version control).
+2. Set:
+
+   - `LANGSMITH_TRACING=true`
+   - `LANGSMITH_API_KEY=your_key`
+   - `LANGSMITH_PROJECT=inchand-ai-commerce-mvp`
+
+3. Run the FastAPI app or the Python demo as usual. Traces should appear in the LangSmith project you configured.
+
+**Security**
+
+- Do not commit API keys. Use `.env` locally or inject secrets via your deployment platform in production.
+
+**Scope of this step**
+
+- This adds configuration and documentation only. No LLM or RAG is introduced here; tracing applies to the existing mock workflow when LangChain/LangGraph emit spans to LangSmith.
+
+**Local run examples** (inline env vars; replace `your_key` with a real key from LangSmith)
+
+FastAPI:
+
+```bash
+LANGSMITH_TRACING=true LANGSMITH_API_KEY=your_key LANGSMITH_PROJECT=inchand-ai-commerce-mvp python3.11 -m uvicorn app.api.main:app --reload
+```
+
+Python demo:
+
+```bash
+LANGSMITH_TRACING=true LANGSMITH_API_KEY=your_key LANGSMITH_PROJECT=inchand-ai-commerce-mvp python3.11 -c "from app.graph.main_graph import run_vendor_ticket_demo; print(run_vendor_ticket_demo('سلام، وضعیت تسویه را بررسی کنید.', 't-123')['workflow_status'])"
+```
+
+Run these from the project root with `PYTHONPATH=.` or after `pip install -e .` so `app` imports resolve.
+
+**Current explicit tracing entry point**
+
+- `run_vendor_ticket_demo` is decorated with `@traceable` (LangSmith SDK), so a top-level run is emitted even when the graph is mostly custom Python and mock tools.
+- After exporting `LANGSMITH_*` variables (for example by sourcing `.env`), run the API or the Python demo; in LangSmith you should see a run named **`run_vendor_ticket_demo`** (run type **chain**), tagged `inchand`, `vendor_ticket`, `mvp`.
+
+**Dependencies**
+
+Tracing still relies on `LANGSMITH_*` environment variables. The `langsmith` package is available from existing LangChain/LangGraph dependencies; `app/graph/main_graph.py` imports `traceable` explicitly so this entry point always registers with LangSmith when tracing is enabled.
+
+## LLM configuration
+
+The vendor ticket node calls `app.llm.generate_text` only; provider choice comes from `AppSettings` (`LLM_PROVIDER`, `LLM_MODEL`) and optional secrets in `.env`.
+
+### OpenAI provider
+
+- Set `LLM_PROVIDER=openai`.
+- Set `LLM_MODEL` to a valid OpenAI model for the [Responses API](https://platform.openai.com/docs/api-reference/responses) (for example a current GPT model slug from your account).
+- Set `OPENAI_API_KEY` in the environment or `.env` (never commit keys).
+- The workflow still **requires human approval** before any outbound ticket reply; drafts are operator-facing only until reviewed.
+- Do not point real production ticket exports at the model until **anonymization** and data review are complete.
+
+### Mock provider (default)
+
+- `LLM_PROVIDER=mock` keeps deterministic Persian placeholder output for local development and CI.
+
+## Embeddings Foundation
+
+Text **embeddings** back future **semantic RAG** (similarity search over policy and ticket snippets). They are **not** wired into the LangGraph path yet; this package is a small provider-agnostic layer like `app.llm`.
+
+- **Default:** `EMBEDDING_PROVIDER=mock` and `EMBEDDING_MODEL=mock-embedding-small` yield a **deterministic 16-D vector** with no network I/O (see `app/embeddings/factory.py`).
+- **OpenAI adapter:** when `provider="openai"`, the factory calls `client.embeddings.create` and requires **`OPENAI_API_KEY`** in the environment; use this **manually** only when you are ready to pay for tokens and have approved data handling.
+- **Not included yet:** pgvector, Pinecone, Qdrant, or any vector database; **no ingestion pipeline**; mock RAG in `app/rag` is unchanged.
+- **Tests** exercise only the **mock** path and the **missing-key** guard for OpenAI; they **do not** call the OpenAI network.
+
+Configure via `AppSettings` / env: **`EMBEDDING_PROVIDER`**, **`EMBEDDING_MODEL`** (see `.env.example`).
+
+## Offline RAG Ingestion Foundation
+
+The **`app/rag/ingestion.py`** module prepares **embedding-ready** `RAGDocument` rows from **approved / anonymized** support artifacts (`VendorTicketRecord`, `VendorTicketEvaluationExample`) and offers **character-based chunking** for long texts.
+
+- **Purpose:** turn offline exports into a normalized document shape before any vector store or embedding batch job runs.
+- **Chunking:** sliding character windows (`chunk_text`, `rag_document_to_chunks`) run **before** embeddings and **before** pgvector/Pinecone/Qdrant; chunk metadata records `parent_document_id`, `chunk_index`, and `chunk_count`.
+- **Not here:** embedding vectors are **not** produced in this module (use `app/embeddings` later); **no database writes**; **no automatic ingestion** of raw production dumps—operators must anonymize and approve sources first.
+- **Safety:** processing is **local, deterministic, and pure**; suitable for unit tests and offline pipelines only.
+
+## Offline Embedding Record Preparation
+
+**`app/rag/vector_records.py`** builds **`VectorRecord`** rows by calling **`generate_embedding`** on each `RAGDocument`’s `content` and merging document metadata with embedding metadata—**without** writing to Postgres, pgvector, Pinecone, Qdrant, or any external index.
+
+- **Boundary:** ingestion/chunking (`ingestion.py`) → embeddings (`app/embeddings`) → **vector-ready records** (`vector_records.py`) → *(future)* vector store loaders.
+- **Mock default:** `embedding_provider="mock"` keeps **16-D deterministic** vectors for CI and local pipelines.
+- **OpenAI:** you can pass `embedding_provider="openai"` in **manual** jobs when keys and data review are in place; **unit tests stick to mock** so nothing hits the network.
+
+## Vector Store Interface
+
+**`app/rag/vector_store.py`** defines a small **`VectorStore`** contract (`upsert`, `search`, `count`) with an **`InMemoryVectorStore`** used for **tests and local experiments**. Search uses **cosine similarity** over stored `VectorRecord.vector` values; **dimension mismatches are skipped** rather than scored.
+
+- **Why:** keep retrieval and indexing **decoupled** from pgvector, Pinecone, Qdrant, or Weaviate until adapters implement the same interface.
+- **Current scope:** **in-memory only**—no PostgreSQL, no network, no OpenAI calls in the default path.
+- **Future:** production backends can subclass or implement **`VectorStore`** while RAG retrievers depend on the interface, not a vendor SDK.
+- **Production design (proposed):** PostgreSQL + pgvector adapter is documented in [ADR 0001: PgVector Store Design](docs/adr/0001-pgvector-store-design.md) (schema, indexing, migration plan—**not implemented yet**).
+
+## Local PgVector Development Environment
+
+**Local development only.** The Docker Compose file uses fixed dev credentials (`inchand` / `inchand_dev_password`)—**never** reuse them in production.
+
+This provides a Postgres + pgvector container and SQL migration stub (`db/migrations/0001_create_rag_vector_records.sql`). The **`PgVectorStore`** adapter (`app/rag/pgvector_store.py`) uses **`psycopg`** (Python PostgreSQL driver) but is **not wired into runtime retrieval** yet—**`retrieve_context`** still uses **`InMemoryVectorStore`** by default.
+
+```bash
+make pg-up      # docker compose up -d  (image: pgvector/pgvector:pg16)
+make pg-init    # apply migration via scripts/db_init_pgvector.sh
+make pg-logs    # follow postgres logs
+make pg-down    # docker compose down
+```
+
+Optional: set **`DATABASE_URL`** before **`make pg-init`** (not printed by the script). Default:
+
+`postgresql://inchand:inchand_dev_password@127.0.0.1:5432/inchand_ai`
+
+Verify the empty table:
+
+```bash
+psql "postgresql://inchand:inchand_dev_password@127.0.0.1:5432/inchand_ai" \
+  -c "SELECT COUNT(*) FROM rag_vector_records;"
+```
+
+**`make ci`** does not start Docker or require Postgres. **`pg-*`** targets are for manual local validation only.
+
+## PgVectorStore Adapter
+
+**`PgVectorStore`** (`app/rag/pgvector_store.py`) implements the existing **`VectorStore`** interface against **`rag_vector_records`** (cosine distance via pgvector, `ON CONFLICT` upsert by `record_id`).
+
+- **Not wired** into **`retrieve_context`**, FastAPI, or LangGraph yet.
+- **`InMemoryVectorStore`** remains the default for CI, unit tests, and **`semantic_local`** profile.
+- Optional live integration tests (migration must be applied first):
+
+```bash
+make pg-up
+make pg-init
+make test-pgvector
+# or:
+PGVECTOR_TEST_DATABASE_URL=postgresql://inchand:inchand_dev_password@127.0.0.1:5432/inchand_ai \
+  pytest -m pgvector
+```
+
+## Semantic RAG Retriever
+
+**`app/rag/semantic_retriever.py`** wires the first **end-to-end semantic retrieval** path: **query text → `generate_embedding` → `VectorStore.search` → `RAGResult`**, using **`vector_record_to_rag_document`** for scored `RAGDocument` rows.
+
+- **Defaults:** **`embedding_provider="mock"`** and **`InMemoryVectorStore`** (via **`build_in_memory_store_from_documents`**) keep runs **local and deterministic**; cosine similarity in the in-memory store drives ranking.
+- **Interfaces:** retrieval depends on **`VectorStore`** and the embedding factory, **not** on pgvector, Pinecone, Qdrant, or vendor-specific vector SDKs.
+- **`PgVectorStore`** exists for Postgres + pgvector but is **not** used in the default graph path yet; **`semantic_retrieve`** stays storage-agnostic via **`VectorStore`**.
+- **Tests** use **mock embeddings only** and do not call OpenAI or write to any database.
+
+## RAG Context Injection
+
+**`build_vendor_ticket_prompt`** in **`app/prompts/vendor_ticket.py`** appends a Persian **«اسناد و سیاست‌های بازیابی‌شده»** section built from **`RAGDocument`** rows (title, source type, optional similarity score, truncated content). The **`vendor_ticket_node`** reads **`retrieved_context["rag_documents"]`** (dicts from state), coerces them to **`RAGDocument`**, and passes them into the prompt builder so the **LLM sees policy snippets and approved response patterns** alongside ticket fields.
+
+- **Retrieval stays provider-agnostic:** **`retrieve_context`** calls **`retrieve_for_workflow`** with **`RetrievalStrategyName.MOCK`** today (mock catalog); other strategies or backends can swap in without changing LangGraph topology.
+- **Safety:** long document bodies are **truncated** per document in the prompt; **no database** and **no pgvector** in this path; tests remain **mock-only** (no OpenAI).
+- **Human approval:** drafts are still **operator-facing only** until reviewed; nothing is sent to a vendor without **human approval**.
+
+## Retrieval Strategy Layer
+
+**`app/rag/strategy.py`** exposes **`retrieve_for_workflow`** and **`RetrievalStrategyName`**. Workflow code (for example **`retrieve_context`**) calls **`retrieve_for_workflow`** instead of hardcoding **`retrieve_documents`** so orchestration stays decoupled from how hits are produced.
+
+- **Strategies:** **`mock`** (default, same catalog as before), **`policy_only`** and **`approved_examples`** (filter the mock catalog with **`provider="strategy"`** metadata), and **`semantic`**, which runs **`semantic_retrieve`** when the caller passes an **explicit `VectorStore`** (typically **`InMemoryVectorStore`** built offline for tests or demos). There is **no global vector store** inside the strategy layer.
+- **Default graph path:** **`retrieve_context`** reads **`RAG_STRATEGY`** from **`AppSettings`** (default **`mock`**). Set **`semantic`** to use the local bootstrap **`InMemoryVectorStore`** with **mock embeddings**; invalid values fall back to **mock** and append a **`ToolError`**. **pgvector** and other production **`VectorStore`** implementations remain future work.
+- **Why:** swap **mock**, **filtered**, **semantic**, or future **hybrid** retrieval without editing node topology or FastAPI.
+- **Observability:** **`tool_results["retrieve_for_workflow"]`** records **`strategy`**, **`count`**, and **`provider`**; the legacy **`retrieve_documents`** summary remains for compatibility.
+
+## Runtime RAG Store Bootstrap
+
+**`app/rag/bootstrap.py`** provides a **small, deterministic Persian corpus** (`default_vendor_ticket_documents`) and helpers to build a **fresh `InMemoryVectorStore`** (`build_default_vendor_ticket_vector_store`) and run **semantic retrieval** in one call (`retrieve_semantic_vendor_ticket_context`) using **mock embeddings** only.
+
+- **Purpose:** local demos and scripts that need **semantic-style** ranking **without pgvector**, **without Postgres**, and **without a process-wide singleton store**—each helper builds or queries an explicit store.
+- **Graph default:** **`RAG_STRATEGY`** defaults to **`mock`** so CI and local runs match earlier behavior unless you opt into **`semantic`**, **`policy_only`**, or **`approved_examples`** in **`.env`**.
+- **No hidden globals:** each **`semantic`** run in the graph builds a **fresh** default corpus store (see bootstrap module); for custom corpora, callers can still build a **`VectorStore`** elsewhere and call **`retrieve_for_workflow`** directly.
+
+## Versioned Corpus Manifest Foundation
+
+The default vendor-ticket semantic corpus lives under **`corpus/vendor_ticket/`**: a **`manifest.json`** plus small **UTF-8 Persian** text files in **`policies/`**, **`approved_patterns/`**, and **`style_guides/`**. **`app/rag/corpus_manifest.py`** defines **`CorpusManifest`** / **`CorpusManifestDocument`** and loads them into **`RAGDocument`** rows with **deterministic list order**—no globbing, no DB, no background workers.
+
+- **Why leave Python:** manifests and bodies are **easier to review, diff, and version** than long embedded strings, and they foreshadow **audit-friendly ingestion** without building a pipeline yet.
+- **Scope today:** **filesystem only**; **`default_vendor_ticket_documents()`** reads **`manifest.json`** at runtime (same public bootstrap API as before).
+- **Future:** **`manifest_version`** supports corpus evolution; a **pgvector** or hosted index can reuse the same manifest as the **source of truth** once ingestion is added.
+
+## Retrieval Evaluation Foundation
+
+**`app/rag/evaluation.py`** compares **`RAGResult`** rows to expectations. **Labeled cases** live in **`corpus/vendor_ticket/eval_cases.json`** (UTF-8 JSON: **`eval_version`**, **`workflow_type`**, **`locale`**, ordered **`cases`**). **`load_retrieval_eval_cases`** / **`load_vendor_ticket_eval_cases_from_file`** validate that file; **`default_vendor_ticket_eval_cases()`** reads the default path next to the corpus manifest—**Python is the engine, not the source of truth** for case definitions.
+
+- **No LLM / no OpenAI / no pgvector** in the eval layer; reviewers can **edit queries and expected ids** without code changes.
+- **`run_default_vendor_ticket_retrieval_eval()`** still runs the default file-backed suite over **mock** semantic retrieval—**smoke-quality**, not a full benchmark.
+- **Use case:** evolve **`eval_version`** and cases alongside **`manifest_version`** before packaging or production **`VectorStore`** work.
+
+## Corpus/Eval Consistency Guard
+
+**`app/rag/consistency.py`** cross-checks **`corpus/vendor_ticket/eval_cases.json`** against **`corpus/vendor_ticket/manifest.json`**:
+
+- every **`expected_document_id`** must exist in the manifest’s **`documents`**
+- every **`required_source_type`** must be represented by the **`source_type`** of at least one of that case’s **expected** documents (not merely any row elsewhere in the manifest)
+
+**`check_default_vendor_ticket_corpus_eval_consistency()`** loads both defaults offline; **`assert_corpus_eval_consistency`** is a strict helper for tests or CI.
+
+- **Why:** stops **silent drift** when corpus rows are renamed, removed, or mis-typed relative to eval expectations.
+- **Scope:** **deterministic, filesystem-only**—no vector DB, no OpenAI, no graph or API changes.
+- **Typical use:** run (or assert) in **CI** before **packaging** the corpus or investing in **pgvector** ingestion.
+
+## Corpus Packaging + Hash Verification
+
+**`corpus/vendor_ticket/corpus.lock.json`** records **expected SHA-256 hashes and file sizes** for corpus assets (`manifest.json`, **`eval_cases.json`**, and **`.txt`** bodies). **`verify_corpus_against_lockfile`** compares on-disk files to that lockfile; changing corpus content requires **regenerating the lockfile intentionally** via **`write_corpus_lockfile`**.
+
+- **`verify_corpus_integrity`**: builds a local inventory (excludes **`corpus.lock.json`** from the hashed set).
+- **`verify_default_vendor_ticket_corpus_lockfile`**: fails on missing files, unexpected files, hash mismatch, or size mismatch.
+- **`scripts/check_corpus_integrity.py`** runs three checks and exits **0** only when all pass:
+  1. corpus integrity inventory
+  2. corpus/eval consistency (`manifest.json` vs **`eval_cases.json`**)
+  3. corpus lockfile verification
+- **CI:** run **`python3.11 scripts/check_corpus_integrity.py`** before packaging or deploy.
+
+Example (from repo root, with `PYTHONPATH=.` or after `pip install -e .`):
+
+```bash
+python3.11 scripts/check_corpus_integrity.py
+```
+
+To regenerate the lockfile after an approved corpus change:
+
+```bash
+PYTHONPATH=. python3.11 -c "
+from app.rag.corpus_integrity import write_corpus_lockfile, default_vendor_ticket_corpus_lockfile_path
+write_corpus_lockfile(
+    base_dir='corpus/vendor_ticket',
+    lockfile_path=default_vendor_ticket_corpus_lockfile_path(),
+    corpus_name='vendor_ticket',
+)
+"
+```
+
+## Runtime Retrieval Strategy Configuration
+
+**`retrieve_context`** builds a typed **`RetrievalConfig`** from **`AppSettings`** via **`build_retrieval_config_from_settings`** (see **`app/rag/config.py`**). Defaults remain **`mock`** strategy and **`top_k=5`**.
+
+### Profile presets (optional)
+
+Set **`RAG_PROFILE`** to select a named preset instead of tuning each field manually:
+
+| Profile | Strategy | Embeddings |
+|---------|----------|------------|
+| **`mock`** (preset) | `mock` | mock |
+| **`policy_only`** | `policy_only` | mock |
+| **`approved_examples`** | `approved_examples` | mock |
+| **`semantic_local`** | `semantic` (in-memory bootstrap store) | mock |
+| **`custom`** | uses **`RAG_STRATEGY`**, **`RAG_TOP_K`**, **`EMBEDDING_*`** |
+
+Example:
+
+```env
+RAG_PROFILE=semantic_local
+```
+
+When **`RAG_PROFILE`** is empty, individual env vars below apply (unchanged behavior).
+
+**Validation:** **`RAG_PROFILE`** is checked when **`AppSettings`** loads (startup / first **`get_settings()`**). Unknown profile names raise a **Pydantic validation error** immediately. **`RAG_STRATEGY`** is **not** validated at settings load—invalid values still produce a **`ToolError`** in **`retrieve_context`** and fall back to **`mock`** (useful with **`RAG_PROFILE=custom`** for manual tuning).
+
+**Recommended use:**
+
+- Presets: set **`RAG_PROFILE`** (`mock`, `policy_only`, `approved_examples`, `semantic_local`).
+- Manual tuning: **`RAG_PROFILE=custom`** plus **`RAG_STRATEGY`**, **`RAG_TOP_K`**, and **`EMBEDDING_*`**.
+
+Environment variables (mapped to **`AppSettings`**):
+
+- **`RAG_PROFILE`** → **`rag_profile`**: optional preset (see table above); validated at settings load.
+- **`RAG_STRATEGY`** → **`rag_strategy`**: controls how **`retrieve_context`** loads **`rag_documents`** (used when no profile, or with **`custom`**); runtime fallback only.
+- **`RAG_TOP_K`** → **`rag_top_k`**: number of documents requested during workflow retrieval (default **5**; used when no profile, or with **`custom`**).
+- **`EMBEDDING_PROVIDER`** / **`EMBEDDING_MODEL`**: passed through to semantic retrieval and embedding calls.
+
+Strategy values:
+
+- **`mock`** (default): deterministic mock catalog (**unchanged** from earlier MVP steps).
+- **`semantic`**: cosine search over a **new in-memory store** built from **`default_vendor_ticket_documents`**, using **`embedding_provider`** / **`embedding_model`** (keep **`mock`** for no network).
+- **`policy_only`** / **`approved_examples`**: filter strategies over the mock catalog (**`provider="strategy"`** in **`RAGResult`**).
+- **Unknown values:** a **`ToolError`** is appended and retrieval **falls back to `mock`** so the node does not raise.
+- **pgvector / production DB:** not used here; staged rollout should later point **`semantic`** (or a new strategy) at a real **`VectorStore`** adapter.
+
+## Retrieval Config Observability
+
+Each workflow run records **safe** retrieval metadata (no API keys or secrets):
+
+- **`POST /run-vendor-ticket`** responses include **`retrieval_summary`**: requested/effective strategy, provider, document count, **`top_k`**, embedding provider/model, and optional **`rag_profile`**.
+- **`audit_log`** entries for **`retrieve_context`** include **`requested_rag_strategy`**, **`effective_rag_strategy`**, **`rag_provider`**, **`rag_top_k`**, embedding fields, and **`rag_document_count`**.
+- **`tool_results.retrieve_for_workflow`** mirrors the same fields (legacy **`strategy`** / **`count`** / **`provider`** keys remain).
+
+Use this to debug **mock vs semantic** runs and **invalid-strategy fallbacks** (requested strategy shows the env value; effective strategy shows **`mock`** after fallback). Full RAG document bodies are **not** exposed in the API response.
+
+## Manual Smoke Test: Semantic RAG Vendor Ticket
+
+This smoke test verifies that the **vendor ticket** workflow uses **semantic RAG** through runtime configuration:
+
+**FastAPI → LangGraph → `retrieve_context` → `RAG_STRATEGY=semantic` → runtime in-memory vector store (bootstrap corpus) → prompt injection → LLM → human approval.**
+
+No **pgvector**, no **Postgres vector** storage, and no **Pinecone/Qdrant/Weaviate**; embeddings stay on the **mock** path unless you deliberately switch them for a separate experiment.
+
+Recommended order: **0 → 1 → 2 → 3 → 4 → 5 → 6** (optional LangSmith: step 3).
+
+### 0. Preflight configuration check
+
+From the project root, validate **local** settings **before** installing or starting the server:
+
+```bash
+make config-check
+```
+
+This loads **`AppSettings`** from your **`.env`** (offline): catches invalid **`RAG_PROFILE`** early, does **not** call OpenAI, and does **not** print secrets.
+
+If **`config-check` fails:** fix **`.env`**, rerun **`make config-check`**, then continue—do **not** start **`uvicorn`** until it passes.
+
+### 1. Purpose
+
+Confirm end-to-end wiring: **`retrieve_context`** builds a fresh default **`InMemoryVectorStore`**, runs **`retrieve_for_workflow`** with **`SEMANTIC`**, injects scored **`rag_documents`** into **`build_vendor_ticket_prompt`**, and still ends in **awaiting approval** with **no outbound send**.
+
+### 2. Install and configure
+
+Install dependencies:
+
+```bash
+cd inchand_ai
+pip install -e ".[dev]"
+```
+
+Ensure **`.env`** includes (at minimum for semantic RAG with mock embeddings):
+
+  ```env
+  RAG_STRATEGY=semantic
+  RAG_TOP_K=5
+  EMBEDDING_PROVIDER=mock
+  EMBEDDING_MODEL=mock-embedding-small
+  ```
+
+- **LLM** can be either:
+
+  ```env
+  LLM_PROVIDER=mock
+  LLM_MODEL=mock-vendor-ticket-drafter
+  ```
+
+  or, if you are manually testing **real** generation (optional; requires a key in the environment, never in git):
+
+  ```env
+  LLM_PROVIDER=openai
+  LLM_MODEL=gpt-4.1-mini
+  OPENAI_API_KEY=your_key
+  ```
+
+Re-run preflight after editing **`.env`**:
+
+```bash
+make config-check
+```
+
+### 3. Optional LangSmith
+
+```env
+LANGSMITH_TRACING=true
+LANGSMITH_ENDPOINT=https://eu.api.smith.langchain.com
+LANGSMITH_API_KEY=your_langsmith_key
+LANGSMITH_PROJECT=inchand-ai-commerce-mvp
+```
+
+### 4. Export environment and start FastAPI
+
+From the project root:
+
+```bash
+set -a && source .env && set +a && PYTHONPATH=. python3.11 -m uvicorn app.api.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+### 5. Trigger the workflow
+
+```bash
+curl -s -X POST "http://127.0.0.1:8000/run-vendor-ticket" \
+  -H "Content-Type: application/json" \
+  -d '{"user_input":"سلام، تسویه من با فاکتور فروش هم‌خوان نیست و نیاز به بررسی مالی دارم.","ticket_id":"t-semantic-rag-smoke-001"}' \
+  | python3.11 -m json.tool
+```
+
+**Optional helper:** with the server running and **`RAG_STRATEGY=semantic`** already exported (e.g. after `set -a && source .env && set +a` in the same shell as the server):
+
+```bash
+make smoke-semantic
+# or: ./scripts/smoke_semantic_rag_vendor_ticket.sh
+```
+
+The script runs **`make config-check`**-equivalent preflight (**`scripts/check_config.py`**) before **`curl`**—no API keys printed, no **`.env`** auto-sourced. **`make config-check`** is still recommended before **`uvicorn`**. The script **fails fast** if preflight or **`RAG_STRATEGY`** checks fail. Override the base URL with **`BASE_URL`** if needed.
+
+### 6. Inspect the response
+
+Parse the JSON and confirm:
+
+- **`workflow_type`** is **`"vendor_ticket"`**
+- **`workflow_status`** is **`"awaiting_approval"`** on the successful path
+- **`approval_status`** is **`"required"`**
+- **`human_approval_required`** is **`true`**
+- **`errors`** is **`[]`**
+- **`tool_results.retrieve_for_workflow.strategy`** is **`"semantic"`**
+- **`tool_results.retrieve_for_workflow.provider`** is **`"semantic"`**
+- **`specialist_output.evidence`** contains a line starting with **`rag_document_count=`**
+- **`specialist_output.evidence`** contains a line starting with **`rag_sources=`**
+- **`retrieved_context.rag_documents`** (or **`rag_sources`**) should include **semantically relevant** support/policy snippets from the bootstrap corpus (titles and `source_type` such as **`policy`**, **`approved_pattern`**, **`style_guide`**)
+- When **`LLM_PROVIDER=openai`**, the injected RAG block in the prompt should **influence draft quality** versus running without that context; with **`mock`**, the draft remains deterministic placeholder text but the retrieval path is still validated
+
+### 7. LangSmith checks (if enabled)
+
+- In the LangSmith UI, open the project from **`LANGSMITH_PROJECT`**.
+- Find a run named **`run_vendor_ticket_demo`**; confirm there is **no crash** and the trace completes.
+- Cross-check HTTP JSON **`tool_results.retrieve_for_workflow`** for **`strategy`** / **`provider`** **`semantic`** and **`specialist_output.evidence`** for RAG counts/sources so the run reflects the **semantic RAG** path.
+
+### 8. Safety
+
+- Do **not** use raw **production** ticket exports until **anonymization** and policy sign-off.
+- Do **not** send the generated draft to a **real vendor** inbox or ticket system from this smoke test.
+- **Human approval remains required** before any real send in product flows.
+
+## Manual Smoke Test: OpenAI Vendor Ticket Draft
+
+This is a **manual, local-only** check that the FastAPI → LangGraph → `generate_text` OpenAI path returns a real draft while **human approval** still gates anything outbound. **Do not** run against raw production ticket exports; **do not** send the model output to a real vendor from this smoke path.
+
+Recommended order: **0 → 1 → 2 → 3 → 4 → 5** (optional LangSmith: step 6).
+
+### 0. Preflight configuration check
+
+From the project root:
+
+```bash
+make config-check
+```
+
+Validates **local** **`.env`** / **`AppSettings`** before startup (invalid **`RAG_PROFILE`** fails fast; no OpenAI calls; no secrets printed).
+
+If **`config-check` fails:** fix **`.env`**, rerun **`make config-check`**, then continue—only start **`uvicorn`** after it passes.
+
+### 1. Preconditions
+
+- You have a **valid OpenAI API key** (never commit it; keep it in `.env` or your shell only).
+- Your **`.env`** (or exported environment) includes at least:
+
+  ```env
+  LLM_PROVIDER=openai
+  LLM_MODEL=gpt-4.1-mini
+  OPENAI_API_KEY=your_key
+  ```
+
+- **LangSmith** (optional) can be enabled for the same run, for example:
+
+  ```env
+  LANGSMITH_TRACING=true
+  LANGSMITH_ENDPOINT=https://eu.api.smith.langchain.com
+  LANGSMITH_API_KEY=your_langsmith_key
+  LANGSMITH_PROJECT=inchand-ai-commerce-mvp
+  ```
+
+### 2. Install dependencies
+
+```bash
+cd inchand_ai
+pip install -e ".[dev]"
+```
+
+Re-run **`make config-check`** after changing **`.env`**.
+
+### 3. Export environment and start FastAPI
+
+From the project root (so `app` imports resolve):
+
+```bash
+set -a && source .env && set +a && PYTHONPATH=. python3.11 -m uvicorn app.api.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+### 4. Trigger the workflow
+
+```bash
+curl -s -X POST "http://127.0.0.1:8000/run-vendor-ticket" \
+  -H "Content-Type: application/json" \
+  -d '{"user_input":"سلام، وضعیت تسویه من با فاکتور هم‌خوان نیست. لطفاً بررسی کنید.","ticket_id":"t-openai-smoke-001"}' | python3.11 -m json.tool
+```
+
+**Optional helper:** with the server already running and **`OPENAI_API_KEY` exported** in your shell (after sourcing `.env` in that same shell), you can run:
+
+```bash
+make smoke-openai
+# or: ./scripts/smoke_openai_vendor_ticket.sh
+```
+
+The script enforces the same offline config preflight before **`curl`** (see semantic smoke above). **`make config-check`** before **`uvicorn`** is still recommended. The script **does not** embed keys; it fails fast if preflight fails or **`OPENAI_API_KEY`** is unset. Override the base URL with **`BASE_URL`** if needed.
+
+### 5. Inspect the response
+
+Parse the JSON and confirm:
+
+- `workflow_type` is **`"vendor_ticket"`**
+- `workflow_status` is **`"awaiting_approval"`**
+- `approval_status` is **`"required"`**
+- `human_approval_required` is **`true`**
+- `specialist_output.draft_response` reads like a **real Persian support draft** (not the mock bracket line that starts with **`[خروجی آزمایشی قطعی`** when `LLM_PROVIDER=mock`)
+- `specialist_output.llm_provider` is **`"openai"`**
+- `specialist_output.llm_model` matches your **`LLM_MODEL`** (e.g. `gpt-4.1-mini`)
+- `errors` is **`[]`**
+
+### 6. LangSmith check (if enabled)
+
+- In the LangSmith UI, open the project from **`LANGSMITH_PROJECT`**.
+- Find a run named **`run_vendor_ticket_demo`**; confirm tags/metadata as in the [LangSmith Observability](#langsmith-observability) section.
+- In the HTTP JSON body, confirm **`specialist_output.llm_provider`** is **`openai`** so you know the request used the OpenAI adapter (not mock).
+
+### 7. Safety notes
+
+- Do **not** use raw production ticket exports until **anonymization** and policy sign-off.
+- Do **not** post the generated draft to a real vendor inbox or ticket system from this smoke test.
+- This path is for **local operator verification** only; **human approval remains required** before any real send in product flows.
+
 ## Principles (MVP)
 
 - Mock tools and fixtures before real integrations.
-- No real LLM, database, or RAG until explicitly introduced.
+- LLM calls are opt-in via `LLM_PROVIDER` (`mock` by default); use OpenAI only with approved keys and data handling.
+- No real database or RAG until explicitly introduced.
 - No ticket reply sending or other destructive side effects in the MVP path.
