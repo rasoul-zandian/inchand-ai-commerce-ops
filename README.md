@@ -200,6 +200,133 @@ The vendor ticket node calls `app.llm.generate_text` only; provider choice comes
 
 - `LLM_PROVIDER=mock` keeps deterministic Persian placeholder output for local development and CI.
 
+## Multi-Agent Vendor Ticket Workflow
+
+The vendor ticket LangGraph node (`vendor_ticket_node`) is internally structured into small specialist steps: **intent** (rule-based normalization), **policy grounding** (summarizes existing `retrieved_context` / RAG docs—no new retrieval), **drafting** (prompt + `generate_text`), **QA / self-check** (rule-based post-draft validation), **supervisor / router** (deterministic operational route labels such as `billing_review` or `qa_attention`—does **not** change LangGraph edges yet), **risk review** (deterministic scores, adjusted when QA issues exist), and **evidence building** (audit-friendly lines). This is an incremental agentic-architecture step inside `app/nodes/vendor_ticket.py`; the **external API response shape is unchanged** (additive `qa_*`, `route_label`, `routing_reasons`, and specialist-level `recommended_action` on `specialist_output`), human approval remains required, and **retrieval stays a supporting subsystem** rather than the main workflow graph.
+
+Key agent outputs (`detected_intent`, grounding, QA, routing) are also promoted to **structured top-level `CommerceAIState` fields** (duplicated in `specialist_output` for compatibility) so future conditional LangGraph routing can read route signals without digging into nested dicts. The FastAPI `VendorTicketRunResponse` contract is unchanged.
+
+**Graph-level conditional routing (observability-first):** after `vendor_ticket_node`, `route_after_vendor_ticket` branches to lightweight audit nodes (`billing_review`, `qa_attention_review`, `escalation_review`, `style_guidance_review`, or `general_vendor_review`). Each branch **rejoins** `validate_output` → `risk_and_approval_decision` → `persist_trace`. The **`qa_attention`** path sets `qa_requires_human_attention`, records QA issues in audit/evidence, and surfaces them before normal validation/approval—it does **not** auto-revise drafts or auto-send replies. **Human approval remains required** on all paths.
+
+**Operator QA summary (additive API):** `POST /run-vendor-ticket` responses include **`qa_attention_summary`** (`requires_attention`, issue/warning counts, up to three `top_issues` / `top_warnings`, `summary`, `route_label`). It helps reviewers see why a draft needs attention without duplicating full draft text. It does not replace human approval or trigger auto-revision/send.
+
+### Review queue metadata
+
+`POST /run-vendor-ticket` also returns **`review_queue_metadata`** (`review_category`, `review_priority`, `review_reason`, approval flags, QA/risk signals). This is **metadata only**—no persistent queue, database, or dashboard yet—so future operator tooling can group and prioritize tickets. Categories follow `route_label` (e.g. `billing`, `qa_attention`, `escalation`). Priority is deterministic (`HIGH` / `MEDIUM` / `LOW`). **Human approval remains required**; nothing is auto-sent.
+
+### Review queue persistence contract
+
+`app/review_queue/` defines a **schema-first** contract for future operator queues:
+
+- **`ReviewQueueItem`** — typed snapshot (`review_item_id`, workflow ids, category/priority/reason, QA/risk signals, compact `metadata`). Excludes draft text, secrets, and raw retrieval payloads.
+- **`build_review_queue_item(state)`** — builds an item from `CommerceAIState` / `review_queue_metadata`.
+- **`ReviewQueueAdapter`** — `enqueue_review_item()` + optional `healthcheck()`; implementations (Postgres, Redis, etc.) plug in later.
+- **`NoOpReviewQueueAdapter`** — safe default; no external I/O.
+
+Runtime remains **in-memory**: `persist_trace` may attach a JSON contract snapshot to audit metadata only (no enqueue, no DB). Workflow behavior and approval gates are unchanged.
+
+### Operator review actions contract
+
+`app/review_queue/actions.py` defines typed **operator decisions** on a `ReviewQueueItem`:
+
+- **`ReviewActionType`** — `approve`, `reject`, `request_clarification`, `request_redraft`
+- **`OperatorReviewAction`** — `action_id`, `review_item_id`, `action_type`, `operator_id`, `comment`, compact `metadata`, UTC `created_at`
+- **`build_operator_review_action()`** / **`validate_operator_review_action()`** — deterministic validation (e.g. clarification requires a comment; approve may omit one)
+
+This is **schema-only**: no graph re-run, draft mutation, enqueue, or persistence yet. It is the human-governed foundation for future approval tooling (`ReviewQueueItem` ← reviewed by → `OperatorReviewAction`).
+
+### Review action intake API
+
+`POST /review-actions` accepts a validated **`ReviewActionRequest`** (`review_item_id`, `action_type`, optional `operator_id`, `comment`, `metadata`, `execute`, `workflow_state_snapshot`) and returns **`ReviewActionResponse`**. Accepted actions pass through **`ReviewActionAdapter.record_action()`** (default **`noop`**). With `execute=false` (default), `execution_status="not_executed"`. Invalid actions return HTTP **422** with `validation_errors`.
+
+### Controlled redraft execution
+
+Only **`request_redraft`** may execute, and only when the operator sets **`execute=true`** with a **non-empty `comment`** and a compact **`workflow_state_snapshot`** (`user_input`, `specialist_output.draft_response`, optional grounding/retrieval fields). The API runs **`execute_controlled_redraft()`** (DraftingAgent-style prompt + QA re-check)—**not** the full LangGraph. On success: `execution_status="pending_approval"`, `redraft_response` set, `redraft_summary.requires_human_approval=true`. **No auto-send, no auto-approve.** `approve` / `reject` / `request_clarification` cannot execute. Future persistence can store both the action and redraft result.
+
+### Department-aware review routing
+
+`review_queue_metadata` includes a nested **`department_route`** (`assigned_department`, `reviewer_role`, `routing_source`, `routing_reasons`, `requires_senior_review`) from `app/review_queue/department_routing.py`. Routing uses `ticket_label` (when present), `route_label`, QA attention, and risk score—e.g. finance for billing topics, complaint for شکایت, `qa_review` + `senior_reviewer` when QA/high risk. **Metadata only**; no assignment UI, notifications, or DB queues yet.
+
+### Redraft result contract & audit
+
+Controlled redrafts materialize a **`RedraftResult`** (`app/review_queue/redraft_models.py`): `redraft_id`, `source_action_id`, SHA-256 **`previous_draft_hash`** / **`redraft_hash`** (via `hash_redraft_content()`), operator guidance, QA signals, and compact `metadata.audit`. The API returns **`redraft_result`** and **`redraft_audit`** alongside `redraft_response`—draft bodies are not stored in the artifact, only hashes for change tracking. Still **no auto-send or approval execution**; human approval remains required.
+
+## Agent Workflow Visualization
+
+Mermaid diagrams below describe the **current** vendor-ticket path. Retrieval is a **knowledge layer** (policies, patterns, style guides)—not the product workflow itself. `vendor_ticket_node` **orchestrates internal specialists**; future agentic steps (e.g. **QA / Self-Check Agent**, **Supervisor / Router Agent**) can plug in after drafting or before human approval without changing the external API contract.
+
+**Rendered flowcharts (Graphviz):** [workflow `.svg`](docs/architecture/diagrams/vendor_ticket_agent_workflow.svg) ([`.dot`](docs/architecture/diagrams/vendor_ticket_agent_workflow.dot)) and a separate [visual notation legend `.svg`](docs/architecture/diagrams/vendor_ticket_agent_workflow_legend.svg) ([`.dot`](docs/architecture/diagrams/vendor_ticket_agent_workflow_legend.dot)). Regenerate both with `python3.11 scripts/render_agent_workflow_diagram.py` (writes DOT, then `dot -Tsvg`; requires [Graphviz](https://graphviz.org/) locally, e.g. `brew install graphviz`). CI checks committed DOT/SVG only—no Graphviz binary required in CI. See [docs/architecture/README.md](docs/architecture/README.md).
+
+### Diagram 1 — High-level Commerce OS request flow
+
+```mermaid
+flowchart TD
+    API[FastAPI Request] --> LG[LangGraph Workflow]
+    LG --> N[normalize_request]
+    N --> RW[route_workflow]
+    RW --> RC[retrieve_context]
+    RC --> VT[vendor_ticket_node]
+    VT --> ROUTE{route_after_vendor_ticket}
+    ROUTE -->|qa_attention| QAR["qa_attention_review\n(surfaces QA issues)"]
+    ROUTE -->|escalation| ESC[escalation_review]
+    ROUTE -->|billing| BIL[billing_review]
+    ROUTE -->|style| STY[style_guidance_review]
+    ROUTE -->|default| GEN[general_vendor_review]
+    QAR --> VO[validate_output]
+    ESC --> VO
+    BIL --> VO
+    STY --> VO
+    GEN --> VO
+    VO --> RAD[risk_and_approval_decision]
+    RAD --> PT[persist_trace]
+    PT --> HA[Human Approval / Final Response]
+    HA -.->|operator action| RA[POST /review-actions]
+    RA --> RD{execute=true request_redraft?}
+    RD -->|yes| CR[Controlled Redraft Execution]
+    CR --> NP[New Draft Pending Human Approval]
+    NP -.->|re-approve| HA
+
+    subgraph RET["Retrieval layer (supporting subsystem)"]
+        direction TB
+        RC --> RS[Retrieval Strategy]
+        RS --> VS[VectorStore / RAG Documents]
+    end
+```
+
+`retrieve_context` fills `retrieved_context` (ticket, vendor, policy, `rag_documents`) in shared state; the main graph then runs the specialist draft and approval gates.
+
+### Diagram 2 — Vendor ticket internal multi-agent flow
+
+```mermaid
+flowchart TD
+    VT[vendor_ticket_node orchestrator] --> TI[TicketIntentAgent]
+    TI --> PG[PolicyGroundingAgent]
+    PG --> DA[DraftingAgent]
+    DA --> QA[QACheckAgent]
+    QA --> SR[SupervisorRouterAgent]
+    SR --> RR[RiskReviewAgent]
+    RR --> EB[EvidenceBuilder]
+    EB --> SO[specialist_output]
+    VT --> AUD[audit metadata]
+
+    CTX[retrieved_context / rag_documents] -.->|no new retrieval| PG
+    DA --> PROMPT[build_vendor_ticket_prompt]
+    PROMPT --> LLM[generate_text / LLM layer]
+    LLM --> DA
+    RR -.->|deterministic / rule-based scores| RR
+    EB -.->|RAG + LLM + ticket/vendor lines| EB
+```
+
+| Specialist | Role |
+|------------|------|
+| **TicketIntentAgent** | Normalizes `detected_intent` (rule-based placeholder). |
+| **PolicyGroundingAgent** | Summarizes policy + RAG already in state (`grounding_summary`, sources). |
+| **DraftingAgent** | `build_vendor_ticket_prompt` + provider-agnostic LLM draft. |
+| **QACheckAgent** | Rule-based post-draft checks (risky promises, tone, billing clarification); warnings only by default. |
+| **SupervisorRouterAgent** | Picks internal `route_label` / specialist `recommended_action` from intent, grounding, and QA (human review always required). |
+| **RiskReviewAgent** | `confidence_score` / `risk_score` for approval gating (deterministic; bumps risk when QA issues exist). |
+| **EvidenceBuilder** | Consolidates ticket, vendor, policy, RAG, and LLM evidence lines. |
+
 ## Embeddings Foundation
 
 Text **embeddings** back **semantic RAG** (similarity search over policy and ticket snippets). The default graph path still uses **mock** catalog retrieval; **`RAG_STRATEGY=semantic`** and pgvector profiles call **`generate_embedding`** in **`retrieve_context`**.
@@ -725,6 +852,16 @@ Detail for individual commands: [PgVector Retrieval Evaluation Run](#pgvector-re
 ## Retrieval evaluation snapshots
 
 Known-good **manual staging** baselines live under [`docs/retrieval_snapshots/`](docs/retrieval_snapshots/). The first **Golden Snapshot** ([`golden_snapshot_1536_openai_pgvector.md`](docs/retrieval_snapshots/golden_snapshot_1536_openai_pgvector.md)) records strict-gate **`pg-eval`** / **`pg-compare`** (same-embedding parity) and **`semantic_pgvector`** API smoke for OpenAI **1536-D** + pgvector. Re-compare future corpus, embedding, or retrieval-stack changes against it before promotion—not part of **`make ci`**.
+
+## Real data pilot (planning)
+
+A controlled **anonymized real-ticket** retrieval pilot is documented in [`docs/data_governance/real_data_pilot_plan.md`](docs/data_governance/real_data_pilot_plan.md). No import or production wiring yet—see also [`app/data_readiness/README.md`](app/data_readiness/README.md).
+
+### Conversation ticket snapshot contract
+
+Vendor tickets are **chat-room conversations** (multi-message, role-labeled). Typed exports live in **`app/tickets/conversation_models.py`** (`ConversationTicketSnapshot`, `ConversationMessage`, `conversation_to_plain_text`). Recommended handoff format: **UTF-8 JSONL** — see [`docs/data_governance/real_ticket_export_format.md`](docs/data_governance/real_ticket_export_format.md). Use anonymization placeholders (`SELLER_ID_001`, etc.); raw production exports must not enter git.
+
+Validate exports offline before any pilot import: `PYTHONPATH=. python3.11 scripts/validate_ticket_export.py path/to/export.jsonl` (exit `0` = all lines valid; does not index or import). Map validated rows with `conversation_snapshot_to_workflow_input()` in `app/tickets/workflow_mapping.py`. Replay validated exports through the mock workflow for observation: `PYTHONPATH=. python3.11 scripts/replay_ticket_export.py path/to/export.jsonl --output reports/replay_report.jsonl` (local JSONL report; `reports/` is gitignored; no draft/transcript in output). **`ticket_label`**, **`ticket_subtype`**, and **`room_id`** from the chat room are promoted into `CommerceAIState` during `normalize_request` for department-aware review routing.
 
 ## Vector Store Provider Factory
 

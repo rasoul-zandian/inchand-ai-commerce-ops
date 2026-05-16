@@ -9,7 +9,11 @@ def _reset_settings_cache(monkeypatch: pytest.MonkeyPatch) -> None:
     """Clear LRU cache between tests; default LLM to mock so `.env` cannot break the graph suite."""
     monkeypatch.setenv("LLM_PROVIDER", "mock")
     monkeypatch.setenv("LLM_MODEL", "mock-vendor-ticket-drafter")
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "mock")
+    monkeypatch.setenv("EMBEDDING_MODEL", "mock-embedding-small")
     monkeypatch.setenv("RAG_STRATEGY", "mock")
+    monkeypatch.setenv("RAG_PROFILE", "")
+    monkeypatch.setenv("LANGSMITH_TRACING", "false")
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()

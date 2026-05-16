@@ -37,12 +37,30 @@ def make_base_state(
         "vendor_id": None,
         "ticket_id": ticket_id,
         "application_id": None,
+        "room_id": None,
+        "ticket_label": None,
+        "ticket_subtype": None,
+        "workflow_state_snapshot": {},
         "retrieved_context": {},
         "rag_sources": [],
         "tool_results": {},
         "specialist_output": {},
         "risk_score": None,
         "confidence_score": None,
+        "detected_intent": None,
+        "grounding_summary": None,
+        "grounding_sources": [],
+        "qa_passed": None,
+        "qa_issues": [],
+        "qa_warnings": [],
+        "qa_summary": None,
+        "qa_requires_human_attention": False,
+        "route_label": None,
+        "routing_reasons": [],
+        "specialist_recommended_action": None,
+        "review_category": None,
+        "review_priority": None,
+        "review_reason": None,
         "recommended_action": None,
         "human_approval_required": False,
         "approval_status": ApprovalStatus.NOT_REQUIRED,
@@ -87,6 +105,11 @@ def test_vendor_ticket_workflow_happy_path() -> None:
         entry for entry in state["audit_log"] if entry.node_name == "vendor_ticket_node"
     )
     assert vt_audit.metadata.get("rag_document_count") == 5
+
+    billing_route_audit = next(
+        entry for entry in state["audit_log"] if entry.node_name == "billing_review"
+    )
+    assert billing_route_audit.metadata.get("route_label") == "billing_review"
 
     tools = state["tool_results"]
     assert "get_ticket" in tools

@@ -72,6 +72,22 @@ class AppSettings(BaseSettings):
         ge=1,
         description="Embedding dimensions for PgVectorStore (must match table VECTOR width).",
     )
+    review_action_adapter: str = Field(
+        default="noop",
+        description=(
+            "Operator review action persistence adapter: noop (default, no storage) "
+            "or memory (in-process test/dev only)."
+        ),
+    )
+
+    @field_validator("review_action_adapter", mode="before")
+    @classmethod
+    def _normalize_review_action_adapter(cls, value: Any) -> str:
+        if value is None:
+            return "noop"
+        if not isinstance(value, str):
+            return value
+        return value.strip().lower() or "noop"
 
     @field_validator("pgvector_database_url", mode="before")
     @classmethod

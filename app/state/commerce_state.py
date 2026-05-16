@@ -31,6 +31,11 @@ class CommerceAIState(TypedDict):
     ticket_id: str | None
     application_id: str | None
 
+    room_id: str | None
+    ticket_label: str | None
+    ticket_subtype: str | None
+    workflow_state_snapshot: dict[str, Any]
+
     retrieved_context: dict[str, Any]
     rag_sources: list[RAGSource]
 
@@ -39,6 +44,22 @@ class CommerceAIState(TypedDict):
 
     risk_score: float | None
     confidence_score: float | None
+
+    detected_intent: str | None
+    grounding_summary: str | None
+    grounding_sources: list[str]
+    qa_passed: bool | None
+    qa_issues: list[str]
+    qa_warnings: list[str]
+    qa_summary: str | None
+    qa_requires_human_attention: bool
+    route_label: str | None
+    routing_reasons: list[str]
+    specialist_recommended_action: str | None
+
+    review_category: str | None
+    review_priority: str | None
+    review_reason: str | None
 
     recommended_action: str | None
     human_approval_required: bool

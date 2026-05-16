@@ -40,6 +40,8 @@ Exports should include at least:
 
 Map exports into `VendorTicketRecord` in `app/schemas/ticket_data.py` during a future import step.
 
+**Multi-message chat rooms:** use `ConversationTicketSnapshot` in `app/tickets/conversation_models.py` and [`docs/data_governance/real_ticket_export_format.md`](../../docs/data_governance/real_ticket_export_format.md) (UTF-8 JSONL, one room per line, anonymized placeholders only).
+
 ## Sensitive data (must be masked or removed)
 
 Before any commit, sharing, or indexing:

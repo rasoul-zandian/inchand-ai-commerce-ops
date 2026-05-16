@@ -25,6 +25,7 @@ from app.schemas.workflow import (
     WorkflowType,
 )
 from app.state.commerce_state import CommerceAIState
+from app.tickets.workflow_mapping import apply_ticket_context_to_state
 from app.tools.mock_tools import (
     get_ticket,
     get_vendor_profile,
@@ -73,6 +74,7 @@ def normalize_request(state: CommerceAIState) -> CommerceAIState:
 
     data["request_id"] = request_id
     data["session_id"] = session_id
+    data = dict(apply_ticket_context_to_state(cast(CommerceAIState, data)))
     data["workflow_status"] = WorkflowStatus.IN_PROGRESS
     data["audit_log"] = _append_audit(
         data["audit_log"],
@@ -349,15 +351,25 @@ def risk_and_approval_decision(state: CommerceAIState) -> CommerceAIState:
     data["approval_status"] = ApprovalStatus.REQUIRED
     data["workflow_status"] = WorkflowStatus.AWAITING_APPROVAL
     data["recommended_action"] = "review_ticket_reply_draft"
+    from app.nodes.vendor_ticket import apply_review_queue_metadata_to_state
+
+    data = _state_dict(apply_review_queue_metadata_to_state(cast(CommerceAIState, data)))
+    approval_metadata: dict[str, Any] = {
+        "recommended_action": data["recommended_action"],
+        "risk_score": data.get("risk_score"),
+        "confidence_score": data.get("confidence_score"),
+        "review_category": data.get("review_category"),
+        "review_priority": data.get("review_priority"),
+    }
+    if data.get("qa_requires_human_attention"):
+        approval_metadata["qa_requires_human_attention"] = True
+        approval_metadata["qa_issue_count"] = len(data.get("qa_issues") or [])
+
     data["audit_log"] = _append_audit(
         data["audit_log"],
         node_name="risk_and_approval_decision",
         message="Human approval required for vendor ticket draft.",
-        metadata={
-            "recommended_action": data["recommended_action"],
-            "risk_score": data.get("risk_score"),
-            "confidence_score": data.get("confidence_score"),
-        },
+        metadata=approval_metadata,
     )
     return cast(CommerceAIState, data)
 
@@ -365,10 +377,17 @@ def risk_and_approval_decision(state: CommerceAIState) -> CommerceAIState:
 def persist_trace(state: CommerceAIState) -> CommerceAIState:
     """Mock persistence only; preserve workflow_status (e.g. awaiting approval)."""
     data = _state_dict(state)
+    trace_metadata: dict[str, Any] = {"workflow_status": data.get("workflow_status")}
+    if data.get("human_approval_required") and not (data.get("errors") or []):
+        from app.review_queue.builders import build_review_queue_item
+
+        review_item = build_review_queue_item(cast(CommerceAIState, data))
+        trace_metadata["review_item_id"] = review_item.review_item_id
+        trace_metadata["review_item_contract"] = review_item.model_dump(mode="json")
     data["audit_log"] = _append_audit(
         data["audit_log"],
         node_name="persist_trace",
         message="Trace persistence mocked (no database write).",
-        metadata={"workflow_status": data.get("workflow_status")},
+        metadata=trace_metadata,
     )
     return cast(CommerceAIState, data)

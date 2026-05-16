@@ -1,0 +1,171 @@
+digraph vendor_ticket_agent_workflow {
+  graph [
+    rankdir=TB,
+    splines=ortho,
+    nodesep=0.55,
+    ranksep=0.75,
+    fontsize=11,
+    fontname="Helvetica",
+    label="Inchand AI — Vendor Ticket Agent Workflow",
+    labelloc=t,
+    labeljust=c,
+    bgcolor="#f8fafc"
+  ];
+  node [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", fillcolor="#ffffff"];
+  edge [fontname="Helvetica", fontsize=9, color="#334155"];
+
+  subgraph cluster_runtime {
+    label="Runtime — LangGraph";
+    style="rounded,filled";
+    color="#94a3b8";
+    fillcolor="#ffffff";
+
+    fastapi [label="FastAPI Request", shape=ellipse, fillcolor="#dcfce7"];
+    langgraph [label="LangGraph Workflow", fillcolor="#eef2ff"];
+    normalize_request [label="normalize_request"];
+    route_workflow [label="route_workflow"];
+    retrieve_context [label="retrieve_context", fillcolor="#f1f5f9"];
+    vendor_ticket_orchestrator [
+      label="vendor_ticket_node\nOrchestrator",
+      fillcolor="#faf5ff",
+      color="#7c3aed",
+      penwidth=1.5
+    ];
+    validate_output [label="validate_output"];
+    risk_and_approval [label="risk_and_approval_decision", fillcolor="#fef3c7"];
+    persist_trace [label="persist_trace"];
+    end_node [label="End", shape=ellipse, fillcolor="#dcfce7"];
+
+    fastapi -> langgraph -> normalize_request -> route_workflow -> retrieve_context;
+    retrieve_context -> vendor_ticket_orchestrator;
+  }
+
+  subgraph cluster_retrieval {
+    label="Retrieval layer (supporting)";
+    style="rounded,filled";
+    color="#0369a1";
+    fillcolor="#f0f9ff";
+
+    retrieval_strategy [label="Retrieval Strategy", fillcolor="#e0f2fe"];
+    vectorstore [label="VectorStore / RAG Docs", shape=cylinder, fillcolor="#bae6fd"];
+    rag_policy_context [label="RAG / Policy Context", shape=note, fillcolor="#e0f2fe"];
+
+    retrieval_strategy -> vectorstore -> rag_policy_context;
+  }
+
+  subgraph cluster_specialists {
+    label="Internal Agent Specialists";
+    style="rounded,filled";
+    color="#7c3aed";
+    fillcolor="#faf5ff";
+
+    ticket_intent [label="TicketIntentAgent"];
+    policy_grounding [label="PolicyGroundingAgent"];
+    drafting [label="DraftingAgent"];
+    qa_check [label="QACheckAgent"];
+    supervisor [label="SupervisorRouterAgent"];
+    risk_review [label="RiskReviewAgent"];
+    evidence [label="EvidenceBuilder"];
+    specialist_output [label="specialist_output", shape=note, fillcolor="#f5f3ff"];
+
+    ticket_intent -> policy_grounding -> drafting -> qa_check -> supervisor;
+    supervisor -> risk_review -> evidence -> specialist_output;
+  }
+
+  subgraph cluster_route_obs {
+    label="Route Observability";
+    style="rounded,filled";
+    color="#ca8a04";
+    fillcolor="#fffbeb";
+
+    route_decision [
+      label="Route Decision\n(route_after_vendor_ticket)",
+      shape=diamond,
+      fillcolor="#fef9c3"
+    ];
+    qa_attention_review [
+      label="QA Attention Review\n(surfaces QA issues)",
+      fillcolor="#fef9c3"
+    ];
+    escalation_review [label="escalation_review", fillcolor="#fef9c3"];
+    billing_review [label="billing_review", fillcolor="#fef9c3"];
+    style_guidance_review [label="style_guidance_review", fillcolor="#fef9c3"];
+    general_vendor_review [label="general_vendor_review", fillcolor="#fef9c3"];
+
+    route_decision -> qa_attention_review [style=dashed];
+    route_decision -> escalation_review [style=dashed];
+    route_decision -> billing_review;
+    route_decision -> style_guidance_review [style=dashed];
+    route_decision -> general_vendor_review [style=dashed];
+  }
+
+  subgraph cluster_approval {
+    label="Validation & Human Approval";
+    style="rounded,filled";
+    color="#ea580c";
+    fillcolor="#fff7ed";
+
+    human_approval_required [
+      label="Human Approval\nRequired?",
+      shape=diamond,
+      fillcolor="#fef9c3"
+    ];
+    human_approval [label="Human Approval", fillcolor="#ffedd5", color="#ea580c", penwidth=1.5];
+    final_response [
+      label="Final Response\n(future / bypass)",
+      style="rounded,dashed",
+      fillcolor="#f8fafc"
+    ];
+  }
+
+  subgraph cluster_operator_hitl {
+    label="Operator HITL (API)";
+    style="rounded,filled";
+    color="#0f766e";
+    fillcolor="#ecfdf5";
+
+    operator_review [
+      label="POST /review-actions\nOperator Review Action",
+      fillcolor="#ccfbf1"
+    ];
+    redraft_execute_gate [
+      label="execute=true\nrequest_redraft?",
+      shape=diamond,
+      fillcolor="#fef9c3"
+    ];
+    controlled_redraft [
+      label="Controlled Redraft\nExecution",
+      fillcolor="#99f6e4"
+    ];
+    draft_pending_approval [
+      label="New Draft\nPending Human Approval",
+      fillcolor="#fef3c7",
+      color="#ea580c",
+      penwidth=1.5
+    ];
+
+    operator_review -> redraft_execute_gate;
+    redraft_execute_gate -> controlled_redraft [label="yes"];
+    controlled_redraft -> draft_pending_approval;
+  }
+
+  retrieve_context -> retrieval_strategy [style=dashed, label="retrieve"];
+  rag_policy_context -> policy_grounding [style=dashed, label="context"];
+
+  vendor_ticket_orchestrator -> ticket_intent [style=dashed, label="internal"];
+  specialist_output -> route_decision;
+
+  qa_attention_review -> validate_output;
+  escalation_review -> validate_output;
+  billing_review -> validate_output;
+  style_guidance_review -> validate_output;
+  general_vendor_review -> validate_output;
+
+  validate_output -> risk_and_approval -> persist_trace -> human_approval_required;
+  human_approval_required -> human_approval [label="yes"];
+  human_approval_required -> final_response [label="no", style=dashed];
+  human_approval -> end_node;
+  final_response -> end_node [style=dashed];
+  human_approval -> operator_review [style=dashed, label="operator action"];
+  draft_pending_approval -> human_approval [style=dashed, label="re-approve"];
+}
