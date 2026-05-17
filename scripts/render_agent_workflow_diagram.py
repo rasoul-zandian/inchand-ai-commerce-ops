@@ -29,7 +29,7 @@ def build_dot() -> str:
     rankdir=TB,
     splines=ortho,
     nodesep=0.55,
-    ranksep=0.75,
+    ranksep=0.58,
     fontsize=11,
     fontname="Helvetica",
     label="Inchand AI — Vendor Ticket Agent Workflow",
@@ -84,17 +84,40 @@ def build_dot() -> str:
     style="rounded,filled";
     color="#7c3aed";
     fillcolor="#faf5ff";
+    nodesep=0.35;
+    ranksep=0.38;
 
-    ticket_intent [label="TicketIntentAgent"];
-    policy_grounding [label="PolicyGroundingAgent"];
-    drafting [label="DraftingAgent"];
-    qa_check [label="QACheckAgent"];
-    supervisor [label="SupervisorRouterAgent"];
-    risk_review [label="RiskReviewAgent"];
-    evidence [label="EvidenceBuilder"];
-    specialist_output [label="specialist_output", shape=note, fillcolor="#f5f3ff"];
+    ticket_intent [label="TicketIntentAgent", width=1.55, height=0.42, fixedsize=true];
+    policy_grounding [label="PolicyGroundingAgent", width=1.65, height=0.42, fixedsize=true];
+    drafting [label="DraftingAgent", width=1.35, height=0.42, fixedsize=true];
+    qa_check [label="QACheckAgent", width=1.35, height=0.42, fixedsize=true];
+    supervisor [label="SupervisorRouterAgent", width=1.75, height=0.42, fixedsize=true];
+    risk_review [label="RiskReviewAgent", width=1.45, height=0.42, fixedsize=true];
+    evidence [label="EvidenceBuilder", width=1.45, height=0.42, fixedsize=true];
+    specialist_output [
+      label="specialist_output",
+      shape=note,
+      fillcolor="#f5f3ff",
+      width=1.45,
+      height=0.42,
+      fixedsize=true
+    ];
 
-    ticket_intent -> policy_grounding -> drafting -> qa_check -> supervisor;
+    { rank=same;
+      ticket_intent;
+      policy_grounding;
+      drafting;
+      qa_check;
+    }
+    { rank=same;
+      supervisor;
+      risk_review;
+      evidence;
+      specialist_output;
+    }
+
+    ticket_intent -> policy_grounding -> drafting -> qa_check;
+    qa_check -> supervisor;
     supervisor -> risk_review -> evidence -> specialist_output;
   }
 
@@ -117,6 +140,14 @@ def build_dot() -> str:
     billing_review [label="billing_review", fillcolor="#fef9c3"];
     style_guidance_review [label="style_guidance_review", fillcolor="#fef9c3"];
     general_vendor_review [label="general_vendor_review", fillcolor="#fef9c3"];
+
+    { rank=same;
+      qa_attention_review;
+      escalation_review;
+      billing_review;
+      style_guidance_review;
+      general_vendor_review;
+    }
 
     route_decision -> qa_attention_review [style=dashed];
     route_decision -> escalation_review [style=dashed];

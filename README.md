@@ -861,7 +861,30 @@ A controlled **anonymized real-ticket** retrieval pilot is documented in [`docs/
 
 Vendor tickets are **chat-room conversations** (multi-message, role-labeled). Typed exports live in **`app/tickets/conversation_models.py`** (`ConversationTicketSnapshot`, `ConversationMessage`, `conversation_to_plain_text`). Recommended handoff format: **UTF-8 JSONL** — see [`docs/data_governance/real_ticket_export_format.md`](docs/data_governance/real_ticket_export_format.md). Use anonymization placeholders (`SELLER_ID_001`, etc.); raw production exports must not enter git.
 
-Validate exports offline before any pilot import: `PYTHONPATH=. python3.11 scripts/validate_ticket_export.py path/to/export.jsonl` (exit `0` = all lines valid; does not index or import). Map validated rows with `conversation_snapshot_to_workflow_input()` in `app/tickets/workflow_mapping.py`. Replay validated exports through the mock workflow for observation: `PYTHONPATH=. python3.11 scripts/replay_ticket_export.py path/to/export.jsonl --output reports/replay_report.jsonl` (local JSONL report; `reports/` is gitignored; no draft/transcript in output). **`ticket_label`**, **`ticket_subtype`**, and **`room_id`** from the chat room are promoted into `CommerceAIState` during `normalize_request` for department-aware review routing.
+Validate exports offline before any pilot import: `PYTHONPATH=. python3.11 scripts/validate_ticket_export.py path/to/export.jsonl` (exit `0` = all lines valid; does not index or import). Map validated rows with `conversation_snapshot_to_workflow_input()` in `app/tickets/workflow_mapping.py`.
+
+### Real Replay Calibration
+
+Offline replay runs the mock vendor-ticket workflow per ticket and records compact routing metrics (no draft/transcript in reports). Full first-cycle report: [`docs/operations/real_replay_calibration_report.md`](docs/operations/real_replay_calibration_report.md).
+
+```bash
+# Normalize operational JSON array → standard JSONL (local/private; not committed)
+PYTHONPATH=. python3.11 scripts/normalize_ticket_export.py \
+  data/private/vendor_tickets_50.json \
+  --output data/private/vendor_tickets_50.normalized.jsonl \
+  --skip-empty-messages
+
+# Validate, then replay (mock LLM/RAG)
+PYTHONPATH=. python3.11 scripts/validate_ticket_export.py data/private/vendor_tickets_50.normalized.jsonl
+PYTHONPATH=. python3.11 scripts/replay_ticket_export.py \
+  data/private/vendor_tickets_50.normalized.jsonl \
+  --output reports/replay_report.jsonl \
+  --summary-json
+```
+
+On the first 50-ticket sample, deterministic routing calibration reduced **label vs department mismatches from 32 → 0** (billing_review routes 48 → 13; support department 2 → 34). See the operations report for before/after metrics.
+
+**`ticket_label`**, **`ticket_subtype`**, and **`room_id`** from the chat room are promoted into `CommerceAIState` during `normalize_request` for department-aware review routing.
 
 ## Vector Store Provider Factory
 

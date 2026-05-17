@@ -125,6 +125,31 @@ Do not paste raw exports into prompts; use anonymized snapshots only.
 
 ---
 
+## Real export normalization (offline)
+
+Some operational exports arrive as a **UTF-8 JSON array** (not JSONL) with fields such as `id`, `category`, `shop_id`, and `messages[].type` / `messages[].content`. Convert them locally to the standard snapshot contract:
+
+```bash
+PYTHONPATH=. python3.11 scripts/normalize_ticket_export.py \
+  data/private/vendor_tickets_50.json \
+  --output data/private/vendor_tickets_50.normalized.jsonl
+```
+
+| Source field | Snapshot field |
+|--------------|----------------|
+| `id` | `room_id` |
+| `category` | `ticket_label` |
+| `shop_id` | `seller_id` |
+| `messages[].content` | `messages[].text` |
+| `messages[].type` | `messages[].sender_type` (normalized) |
+| *(generated)* | `messages[].message_id` → `{room_id}_MSG_{index:03d}` |
+
+Sender types are mapped (`seller`/`vendor`/`shop` → `seller`, `support`/`admin` → `support_agent`, `financial` → `finance_agent`, `system` → `system`, otherwise `unknown` with original type in `message.metadata.source_type`). The script validates each normalized row with `parse_conversation_ticket_snapshot()` and prints aggregate stats only (no message bodies in logs). Optional `--skip-empty-messages` drops blank `content` rows (summary includes `skipped_empty_messages`; tickets with no messages left after skipping remain invalid).
+
+**Pipeline order:** normalize → `validate_ticket_export.py` → optional `replay_ticket_export.py`. Keep raw and normalized files under `data/private/` (gitignored); do not commit private exports.
+
+---
+
 ## Offline validation (before AI pipeline)
 
 Validate an export **without** importing, indexing, or calling workflows:

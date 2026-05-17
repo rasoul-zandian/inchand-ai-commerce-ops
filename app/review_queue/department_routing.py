@@ -16,6 +16,7 @@ ALLOWED_REVIEWER_ROLES = frozenset(
 )
 
 _FINANCE_KEYWORDS = (
+    "fund",
     "financial",
     "finance",
     "billing",
@@ -116,6 +117,16 @@ def build_department_review_route(
             reviewer_role="support_operator",
             routing_source="route_label",
             routing_reasons=["route_label_escalation_review"],
+        )
+
+    if _contains_any(label_norm, _SUPPORT_KEYWORDS) and not _contains_any(
+        label_norm, _FINANCE_KEYWORDS
+    ):
+        return DepartmentReviewRoute(
+            assigned_department="support",
+            reviewer_role="support_operator",
+            routing_source="ticket_label",
+            routing_reasons=["ticket_label_support"],
         )
 
     if _is_finance_signal(ticket_label=label_norm, route_label=route_norm):

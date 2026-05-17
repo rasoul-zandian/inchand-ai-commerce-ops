@@ -21,13 +21,22 @@ from app.nodes.vendor_ticket import (
 from tests.test_vendor_ticket_workflow import make_base_state
 
 
-def test_ticket_intent_agent_billing_discrepancy_default() -> None:
+def test_ticket_intent_agent_billing_requires_finance_keywords() -> None:
     result = _ticket_intent_agent(
         ticket_subject="مشکل در تسویه فروش هفتگی",
         ticket_body="مبلغ واریز شده با فاکتور مغایرت دارد.",
         user_input="سلام، تسویه این هفته با فاکتور هم‌خوان نیست.",
     )
     assert result.detected_intent == "billing_discrepancy"
+
+
+def test_ticket_intent_agent_generic_default_not_billing() -> None:
+    result = _ticket_intent_agent(
+        ticket_subject="سلام",
+        ticket_body="وضعیت سفارش",
+        user_input="لطفاً بررسی کنید",
+    )
+    assert result.detected_intent == "general_vendor_support"
 
 
 def test_policy_grounding_agent_counts_rag_and_sources() -> None:

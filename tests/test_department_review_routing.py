@@ -10,6 +10,27 @@ from app.review_queue.department_routing import build_department_review_route
 from tests.test_vendor_ticket_workflow import make_base_state
 
 
+def test_fund_ticket_label_routes_finance() -> None:
+    route = build_department_review_route(
+        ticket_label="fund",
+        route_label="billing_review",
+        qa_requires_human_attention=False,
+        risk_score=0.2,
+    )
+    assert route.assigned_department == "finance"
+
+
+def test_support_label_not_finance_when_route_general() -> None:
+    route = build_department_review_route(
+        ticket_label="support",
+        route_label="general_vendor_support",
+        qa_requires_human_attention=False,
+        risk_score=0.2,
+        detected_intent="general_vendor_support",
+    )
+    assert route.assigned_department == "support"
+
+
 def test_financial_ticket_label_routes_finance() -> None:
     route = build_department_review_route(
         ticket_label="financial",

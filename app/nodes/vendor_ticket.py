@@ -68,8 +68,25 @@ class RiskReviewResult(BaseModel):
 
 _QA_SUMMARY_TOP_N = 3
 
-_BILLING_KEYWORDS = ("تسویه", "فاکتور", "صورتحساب", "مغایرت", "billing", "invoice", "settlement")
+_BILLING_KEYWORDS = (
+    "تسویه",
+    "فاکتور",
+    "صورتحساب",
+    "مغایرت",
+    "billing",
+    "invoice",
+    "settlement",
+    "fund",
+    "payment",
+    "پرداخت",
+    "financial",
+    "finance",
+    "مالی",
+)
 _ESCALATION_KEYWORDS = ("ارجاع", "فوری", "escalat", "urgent")
+_COMPLAINT_LABEL_KEYWORDS = ("complaint", "شکایت", "اعتراض")
+_SUPPORT_LABEL_KEYWORDS = ("support", "پشتیبانی")
+_FINANCE_LABEL_KEYWORDS = ("fund", "financial", "finance", "billing", "مالی", "تسویه")
 _RISKY_PROMISE_TERMS = (
     "واریز قطعی",
     "بازپرداخت قطعی",
@@ -240,11 +257,26 @@ def _combined_ticket_text(
     return f"{ticket_subject}\n{ticket_body}\n{user_input}".lower()
 
 
+def _normalized_label(ticket_label: str | None) -> str:
+    return (ticket_label or "").strip().lower()
+
+
+def _label_contains_any(label: str, needles: tuple[str, ...]) -> bool:
+    if not label:
+        return False
+    return any(needle in label for needle in needles)
+
+
+def _has_finance_text_signal(text: str) -> bool:
+    return any(keyword in text for keyword in _BILLING_KEYWORDS)
+
+
 def _ticket_intent_agent(
     *,
     ticket_subject: str,
     ticket_body: str,
     user_input: str,
+    ticket_label: str | None = None,
 ) -> TicketIntentResult:
     """Rule-based intent normalization (placeholder for future LLM classifier)."""
     text = _combined_ticket_text(
@@ -252,11 +284,27 @@ def _ticket_intent_agent(
         ticket_body=ticket_body,
         user_input=user_input,
     )
+    label = _normalized_label(ticket_label)
+
     if any(kw in text for kw in _ESCALATION_KEYWORDS):
         return TicketIntentResult(detected_intent="escalation_sla")
-    if any(kw in text for kw in _BILLING_KEYWORDS):
+
+    if _label_contains_any(label, _COMPLAINT_LABEL_KEYWORDS):
+        return TicketIntentResult(detected_intent="general_vendor_support")
+
+    if _label_contains_any(label, _SUPPORT_LABEL_KEYWORDS):
+        user_text = user_input.lower()
+        if _has_finance_text_signal(user_text):
+            return TicketIntentResult(detected_intent="billing_discrepancy")
+        return TicketIntentResult(detected_intent="general_vendor_support")
+
+    if _label_contains_any(label, _FINANCE_LABEL_KEYWORDS):
         return TicketIntentResult(detected_intent="billing_discrepancy")
-    return TicketIntentResult(detected_intent="billing_discrepancy")
+
+    if _has_finance_text_signal(text):
+        return TicketIntentResult(detected_intent="billing_discrepancy")
+
+    return TicketIntentResult(detected_intent="general_vendor_support")
 
 
 def _policy_grounding_agent(
@@ -501,6 +549,8 @@ def vendor_ticket_node(state: CommerceAIState) -> CommerceAIState:
     ticket_body = str(ticket.get("body") or "")
     vendor_name = str(vendor.get("name") or "فروشنده")
     user_input = str(data.get("user_input") or "")
+    ticket_context = resolve_ticket_context_from_state(data)
+    ticket_label = ticket_context.get("ticket_label")
 
     previous_cases = ctx.get("previous_cases") or []
     previous_cases_count = len(previous_cases) if isinstance(previous_cases, list) else 0
@@ -510,6 +560,7 @@ def vendor_ticket_node(state: CommerceAIState) -> CommerceAIState:
         ticket_subject=ticket_subject,
         ticket_body=ticket_body,
         user_input=user_input,
+        ticket_label=ticket_label,
     )
     grounding = _policy_grounding_agent(
         retrieved_context=ctx,

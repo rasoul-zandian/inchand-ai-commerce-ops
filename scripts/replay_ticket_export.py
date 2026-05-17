@@ -40,6 +40,7 @@ _FORBIDDEN_REPORT_KEYS = frozenset(
 )
 
 _FINANCE_LABEL_TOKENS = (
+    "fund",
     "financial",
     "finance",
     "billing",

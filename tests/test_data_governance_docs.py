@@ -7,6 +7,7 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _PILOT_PLAN = _REPO_ROOT / "docs" / "data_governance" / "real_data_pilot_plan.md"
 _EXPORT_FORMAT = _REPO_ROOT / "docs" / "data_governance" / "real_ticket_export_format.md"
+_CALIBRATION_REPORT = _REPO_ROOT / "docs" / "operations" / "real_replay_calibration_report.md"
 _README = _REPO_ROOT / "README.md"
 
 
@@ -38,3 +39,24 @@ def test_real_ticket_export_format_doc_exists() -> None:
     assert "JSONL" in text
     assert "SELLER_ID_001" in text
     assert "ConversationTicketSnapshot" in text
+
+
+def test_real_replay_calibration_report_exists() -> None:
+    text = _CALIBRATION_REPORT.read_text(encoding="utf-8")
+    assert "Real Replay Calibration Report" in text
+    assert "## Initial Replay Results (Before Calibration)" in text
+    assert "## Replay Results After Calibration" in text
+    assert "billing_review=48" in text or "billing_review` | 48" in text
+    assert "32" in text and "**0**" in text
+    assert "label_vs_department_mismatch" in text
+    assert "no real tickets" in text.lower() or "No real tickets" in text
+    assert "pgvector" in text.lower()
+
+
+def test_readme_links_real_replay_calibration() -> None:
+    readme = _README.read_text(encoding="utf-8")
+    assert "docs/operations/real_replay_calibration_report.md" in readme
+    assert "Real Replay Calibration" in readme
+    assert "normalize_ticket_export.py" in readme
+    assert "replay_ticket_export.py" in readme
+    assert "32" in readme and "0" in readme
