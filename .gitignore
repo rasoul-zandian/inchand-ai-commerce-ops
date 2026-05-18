@@ -4,3 +4,4 @@ __pycache__/
 .pytest_cache/
 reports/
 data/private/
+corpus/vendor_ticket_real_pilot/

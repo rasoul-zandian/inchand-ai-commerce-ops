@@ -867,22 +867,101 @@ Validate exports offline before any pilot import: `PYTHONPATH=. python3.11 scrip
 
 Offline replay runs the mock vendor-ticket workflow per ticket and records compact routing metrics (no draft/transcript in reports). Full first-cycle report: [`docs/operations/real_replay_calibration_report.md`](docs/operations/real_replay_calibration_report.md).
 
-```bash
-# Normalize operational JSON array → standard JSONL (local/private; not committed)
-PYTHONPATH=. python3.11 scripts/normalize_ticket_export.py \
-  data/private/vendor_tickets_50.json \
-  --output data/private/vendor_tickets_50.normalized.jsonl \
-  --skip-empty-messages
+**Official governance pipeline (redact first, review residual risk):**
 
-# Validate, then replay (mock LLM/RAG)
-PYTHONPATH=. python3.11 scripts/validate_ticket_export.py data/private/vendor_tickets_50.normalized.jsonl
-PYTHONPATH=. python3.11 scripts/replay_ticket_export.py \
-  data/private/vendor_tickets_50.normalized.jsonl \
-  --output reports/replay_report.jsonl \
-  --summary-json
+```text
+normalize → redact → validate redacted JSONL → replay redacted export
+  → privacy review (residual warnings) → reviewer sign-off
+  → approved room_id subset → pilot corpus builder
 ```
 
-On the first 50-ticket sample, deterministic routing calibration reduced **label vs department mismatches from 32 → 0** (billing_review routes 48 → 13; support department 2 → 34). See the operations report for before/after metrics.
+- **Redaction** (`scripts/redact_ticket_export.py`, `app/privacy_review/redaction.py`) reduces warning volume; warnings after redaction are **residual risk** and still require human review.
+- **Redaction ≠ corpus approval** — reviewer sign-off remains mandatory.
+- Use **redacted** JSONL for validate, replay, privacy review, and `build_pilot_corpus.py` — **not** unredacted normalized JSONL.
+- `data/private/` and `reports/` stay gitignored; no embeddings, pgvector indexing, or retrieval activation in these steps.
+
+**166-ticket command sequence** (local/private paths; adjust batch names as needed):
+
+```bash
+# 1. Normalize
+PYTHONPATH=. python3.11 scripts/normalize_ticket_export.py \
+  data/private/vendor_tickets_400.json \
+  --output data/private/vendor_tickets_400.normalized.jsonl \
+  --skip-empty-messages
+
+# 2. Redact (before validate / privacy review)
+PYTHONPATH=. python3.11 scripts/redact_ticket_export.py \
+  data/private/vendor_tickets_400.normalized.jsonl \
+  --output data/private/vendor_tickets_400.redacted.jsonl \
+  --overwrite
+
+# 3. Validate redacted
+PYTHONPATH=. python3.11 scripts/validate_ticket_export.py \
+  data/private/vendor_tickets_400.redacted.jsonl
+
+# 4. Replay redacted
+PYTHONPATH=. python3.11 scripts/replay_ticket_export.py \
+  data/private/vendor_tickets_400.redacted.jsonl \
+  --output reports/vendor_tickets_400_redacted_replay.jsonl
+
+# 5. Dashboard (redacted replay)
+PYTHONPATH=. python3.11 scripts/build_replay_metrics_dashboard.py \
+  reports/vendor_tickets_400_redacted_replay.jsonl \
+  --output reports/vendor_tickets_400_redacted_dashboard.md \
+  --json-output reports/vendor_tickets_400_redacted_dashboard.json
+
+# 6. Privacy review — residual warnings on redacted export
+PYTHONPATH=. python3.11 scripts/build_privacy_review_report.py \
+  reports/vendor_tickets_400_redacted_replay.jsonl \
+  --export-path data/private/vendor_tickets_400.redacted.jsonl \
+  --output reports/privacy_review_166_redacted.md \
+  --json-output reports/privacy_review_166_redacted.json
+```
+
+On the first 50-ticket sample (pre–redact-first policy), routing calibration reduced **label vs department mismatches from 32 → 0**. Re-run the 50-ticket path with redaction when refreshing baselines.
+
+**Calibrated 50-ticket baseline:** [`docs/operations/real_replay_50_ticket_baseline.md`](docs/operations/real_replay_50_ticket_baseline.md) — sanitized snapshot (**mismatch 0**, **QA attention 13/50**). Aggregate metrics only.
+
+**Larger replay runbook:** [`docs/operations/larger_replay_batch_plan.md`](docs/operations/larger_replay_batch_plan.md) — **100–500** ticket procedure (redact-first).
+
+**166-ticket execution report:** [`docs/operations/larger_replay_166_ticket_execution_report.md`](docs/operations/larger_replay_166_ticket_execution_report.md) — **failed_replays=0**, **mismatch=0**, QA **51/166** (30.7%). Pre-redaction warning counts documented separately; use redact-first pipeline for new runs.
+
+**Redacted replay execution (166-ticket):** [`docs/operations/redacted_replay_166_ticket_execution_report.md`](docs/operations/redacted_replay_166_ticket_execution_report.md) — redact-first pipeline executed: **residual warnings 0/166**, replay metrics unchanged vs unredacted. **Ready for reviewer sign-off**; corpus build not auto-approved.
+
+**Privacy review execution (166-ticket):** [`docs/operations/privacy_review_166_ticket_execution_report.md`](docs/operations/privacy_review_166_ticket_execution_report.md) — historical pre-redaction metrics + **residual-warning** workflow. See redacted replay report for post-redaction outcome.
+
+**Pilot corpus planning:** [`docs/operations/pilot_corpus_planning.md`](docs/operations/pilot_corpus_planning.md) — `build_pilot_corpus.py` must read **redacted** JSONL after sign-off (`embedding_status` / `indexing_status` remain `not_started`):
+
+```bash
+PYTHONPATH=. python3.11 scripts/build_pilot_corpus.py \
+  data/private/vendor_tickets_400.redacted.jsonl \
+  --approved-room-ids data/private/approved_room_ids.txt \
+  --corpus-dir corpus/vendor_ticket_real_pilot \
+  --source-batch-id replay_166_v1 \
+  --reviewer-signoff-id SIGNOFF_001
+```
+
+**Pilot corpus 25 build report:** [`docs/operations/pilot_corpus_25_build_report.md`](docs/operations/pilot_corpus_25_build_report.md) — first controlled 25-record pilot corpus (integrity verification, no embeddings/indexing).
+
+**Pilot corpus integrity check** (offline, aggregate output only):
+
+```bash
+PYTHONPATH=. python3.11 scripts/check_pilot_corpus_integrity.py \
+  corpus/vendor_ticket_real_pilot
+```
+
+**Pilot corpus repository policy:** [`docs/operations/pilot_corpus_repository_policy.md`](docs/operations/pilot_corpus_repository_policy.md) — **`corpus/vendor_ticket_real_pilot/` is local-only and gitignored by default**; do not commit real corpus artifacts until explicit governance approval. Commit code, docs, and tests only.
+
+### Reviewer Sign-off Workflow
+
+Human reviewers must explicitly approve any pilot corpus scope **before** a corpus builder exists. This is governance metadata only — not production moderation and not automatic corpus generation.
+
+- **Doc:** [`docs/operations/reviewer_signoff_workflow.md`](docs/operations/reviewer_signoff_workflow.md)
+- **Contracts:** `app/corpus_planning/reviewer_models.py`, `app/corpus_planning/reviewer_builders.py`
+- **Local execution:** `scripts/create_reviewer_signoff.py`, `scripts/select_approved_room_ids.py`, `scripts/validate_approved_room_ids.py` → outputs under `data/private/`
+- **Checklist:** `no_raw_pii_visible`, `anonymization_verified`, `retrieval_safe`, `governance_approved`, `corpus_scope_validated` — all must pass for `decision=approved` (each via `--check`)
+- **Gate:** `corpus_ready_after_signoff()` requires replay + privacy review complete, `approved` decision, full checklist pass
+- **Principle:** AI cannot self-approve; room selection suggests candidates — human confirms before `build_pilot_corpus.py`
 
 **`ticket_label`**, **`ticket_subtype`**, and **`room_id`** from the chat room are promoted into `CommerceAIState` during `normalize_request` for department-aware review routing.
 

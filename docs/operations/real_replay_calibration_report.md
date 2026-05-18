@@ -67,6 +67,19 @@ PYTHONPATH=. python3.11 scripts/replay_ticket_export.py \
 
 Reports under **`reports/`** are local artifacts only (gitignored).
 
+### Static metrics dashboard (offline)
+
+After replay, build a Markdown (and optional JSON) dashboard from the report JSONL—no web UI, no database:
+
+```bash
+PYTHONPATH=. python3.11 scripts/build_replay_metrics_dashboard.py \
+  reports/vendor_tickets_50_replay.jsonl \
+  --output reports/vendor_tickets_50_dashboard.md \
+  --json-output reports/vendor_tickets_50_dashboard.json
+```
+
+The dashboard summarizes label/department/priority distributions, QA attention rates, department×priority matrix, and label-vs-department mismatches (room_id only in examples). It never includes message text, drafts, or retrieval payloads. Keep outputs under **`reports/`**; do not commit dashboards derived from real private data.
+
 ---
 
 ## Initial Replay Results (Before Calibration)
@@ -159,3 +172,9 @@ This validates the replay-first governance path before pilot corpus or indexing 
 2. **Replay metrics summary** — optional script or dashboard-friendly aggregate over `reports/*.jsonl` (still offline).
 3. **Controlled pilot corpus** — human-reviewed snippets under `corpus/vendor_ticket_real_pilot/` after sign-off (separate manifest/lockfile).
 4. **Retrieval evaluation** — only after pilot corpus exists; compare against golden snapshot baselines.
+
+---
+
+## Baseline snapshot
+
+The calibrated **50-ticket** metrics are captured as a sanitized operational baseline (no raw text): [`real_replay_50_ticket_baseline.md`](real_replay_50_ticket_baseline.md).
