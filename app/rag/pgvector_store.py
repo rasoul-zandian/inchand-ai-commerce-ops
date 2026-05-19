@@ -175,6 +175,58 @@ class PgVectorStore(VectorStore):
 
         return results
 
+    def fetch_by_record_id_prefix(self, prefix: str) -> list[VectorRecord]:
+        """Load rows whose ``record_id`` starts with ``prefix`` (no vector ranking)."""
+        needle = prefix.strip()
+        if not needle:
+            return []
+
+        table = self._table_name
+        sql = f"""
+            SELECT
+                record_id,
+                document_id,
+                source_type,
+                content,
+                embedding_provider,
+                embedding_model,
+                dimensions,
+                metadata,
+                vector::text AS vector_text
+            FROM {table}
+            WHERE record_id LIKE %s
+            ORDER BY record_id
+        """
+        pattern = f"{needle}%"
+        records: list[VectorRecord] = []
+        with psycopg.connect(self._database_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (pattern,))
+                rows = cur.fetchall()
+
+        for row in rows:
+            metadata = row[7]
+            if isinstance(metadata, str):
+                metadata = json.loads(metadata)
+            elif not isinstance(metadata, dict):
+                metadata = dict(metadata) if metadata is not None else {}
+
+            records.append(
+                VectorRecord(
+                    record_id=row[0],
+                    document_id=row[1],
+                    source_type=row[2],
+                    content=row[3],
+                    embedding_provider=row[4],
+                    embedding_model=row[5],
+                    dimensions=int(row[6]),
+                    vector=_parse_vector_column(row[8]),
+                    metadata=metadata,
+                )
+            )
+
+        return records
+
     def count(self) -> int:
         table = self._table_name
         sql = f"SELECT COUNT(*) FROM {table}"

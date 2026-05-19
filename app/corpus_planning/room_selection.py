@@ -9,6 +9,13 @@ from typing import Any
 
 from app.corpus_planning.pilot_corpus_builder import load_approved_room_ids
 
+DEFAULT_PILOT_LABEL_BALANCE_TARGETS: dict[str, int] = {
+    "support": 10,
+    "complaint": 7,
+    "fund": 8,
+}
+_VALID_BALANCE_LABELS = frozenset(DEFAULT_PILOT_LABEL_BALANCE_TARGETS)
+
 _FORBIDDEN_CONTENT_KEYS = frozenset(
     {
         "draft_response",
@@ -30,6 +37,7 @@ class RoomSelectionCriteria:
     include_departments: frozenset[str] = field(default_factory=frozenset)
     exclude_departments: frozenset[str] = field(default_factory=frozenset)
     exclude_qa_attention: bool = False
+    label_balance_targets: dict[str, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -40,6 +48,20 @@ class RoomSelectionResult:
     excluded_qa_attention: int
     excluded_label: int
     excluded_department: int
+    label_selected_counts: dict[str, int] = field(default_factory=dict)
+    label_target_counts: dict[str, int] = field(default_factory=dict)
+
+    @property
+    def label_shortfalls(self) -> dict[str, int]:
+        """Per-label deficit when fewer rows matched targets (safe aggregate)."""
+        if not self.label_target_counts:
+            return {}
+        shortfalls: dict[str, int] = {}
+        for label, target in self.label_target_counts.items():
+            selected = self.label_selected_counts.get(label, 0)
+            if selected < target:
+                shortfalls[label] = target - selected
+        return shortfalls
 
 
 def _row_failed(row: dict[str, Any]) -> bool:
@@ -85,12 +107,131 @@ def load_replay_rows_in_order(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def parse_label_balance_targets(entries: list[str]) -> dict[str, int]:
+    """Parse ``LABEL=COUNT`` CLI entries; empty list returns default pilot targets."""
+    if not entries:
+        return dict(DEFAULT_PILOT_LABEL_BALANCE_TARGETS)
+
+    targets: dict[str, int] = {}
+    for raw in entries:
+        text = raw.strip()
+        if "=" not in text:
+            raise ValueError(f"invalid balance label {raw!r}; expected LABEL=COUNT")
+        label_part, count_part = text.split("=", 1)
+        label = _normalize_label(label_part)
+        if label not in _VALID_BALANCE_LABELS:
+            allowed = ", ".join(sorted(_VALID_BALANCE_LABELS))
+            raise ValueError(f"unsupported balance label {label!r}; allowed: {allowed}")
+        try:
+            count = int(count_part.strip())
+        except ValueError as exc:
+            raise ValueError(f"invalid count for balance label {label!r}") from exc
+        if count < 0:
+            raise ValueError(f"balance label count must be >= 0: {label!r}")
+        targets[label] = count
+    return targets
+
+
+def _row_passes_selection_filters(
+    row: dict[str, Any],
+    *,
+    criteria: RoomSelectionCriteria,
+) -> tuple[bool, str | None]:
+    """Return (accepted, exclusion_reason) for shared filter logic."""
+    if _row_failed(row):
+        return False, "failed"
+    if criteria.exclude_qa_attention and _row_qa_attention(row):
+        return False, "qa_attention"
+    label = _normalize_label(row.get("ticket_label"))
+    if criteria.include_labels and label not in criteria.include_labels:
+        return False, "label"
+    if criteria.exclude_labels and label in criteria.exclude_labels:
+        return False, "label"
+    department = _normalize_department(row.get("assigned_department"))
+    if criteria.include_departments and department not in criteria.include_departments:
+        return False, "department"
+    if criteria.exclude_departments and department in criteria.exclude_departments:
+        return False, "department"
+    return True, None
+
+
+def select_approved_room_ids_balanced_from_rows(
+    rows: list[dict[str, Any]],
+    *,
+    criteria: RoomSelectionCriteria,
+    label_targets: dict[str, int],
+) -> RoomSelectionResult:
+    """Select room_ids with per-label quotas (replay order within each label bucket)."""
+    if not label_targets:
+        raise ValueError("label_balance_targets must be non-empty")
+
+    buckets: dict[str, list[str]] = {label: [] for label in label_targets}
+    bucket_seen: dict[str, set[str]] = {label: set() for label in label_targets}
+    excluded_failed = 0
+    excluded_qa = 0
+    excluded_label = 0
+    excluded_department = 0
+
+    for row in rows:
+        room_id = row.get("room_id")
+        if not isinstance(room_id, str) or not room_id.strip():
+            continue
+        room_id = room_id.strip()
+
+        accepted, reason = _row_passes_selection_filters(row, criteria=criteria)
+        if not accepted:
+            if reason == "failed":
+                excluded_failed += 1
+            elif reason == "qa_attention":
+                excluded_qa += 1
+            elif reason == "label":
+                excluded_label += 1
+            elif reason == "department":
+                excluded_department += 1
+            continue
+
+        label = _normalize_label(row.get("ticket_label"))
+        if label not in label_targets:
+            excluded_label += 1
+            continue
+        if room_id in bucket_seen[label]:
+            continue
+        if len(buckets[label]) >= label_targets[label]:
+            continue
+
+        bucket_seen[label].add(room_id)
+        buckets[label].append(room_id)
+
+    selected: list[str] = []
+    for label in sorted(label_targets):
+        selected.extend(buckets[label])
+
+    label_selected_counts = {label: len(buckets[label]) for label in label_targets}
+    return RoomSelectionResult(
+        selected_room_ids=selected,
+        total_rows_scanned=len(rows),
+        excluded_failed=excluded_failed,
+        excluded_qa_attention=excluded_qa,
+        excluded_label=excluded_label,
+        excluded_department=excluded_department,
+        label_selected_counts=label_selected_counts,
+        label_target_counts=dict(label_targets),
+    )
+
+
 def select_approved_room_ids_from_rows(
     rows: list[dict[str, Any]],
     *,
     criteria: RoomSelectionCriteria,
 ) -> RoomSelectionResult:
     """Select candidate room_ids from replay report rows (deterministic report order)."""
+    if criteria.label_balance_targets:
+        return select_approved_room_ids_balanced_from_rows(
+            rows,
+            criteria=criteria,
+            label_targets=criteria.label_balance_targets,
+        )
+
     selected: list[str] = []
     seen: set[str] = set()
     excluded_failed = 0
@@ -104,28 +245,16 @@ def select_approved_room_ids_from_rows(
             continue
         room_id = room_id.strip()
 
-        if _row_failed(row):
-            excluded_failed += 1
-            continue
-
-        if criteria.exclude_qa_attention and _row_qa_attention(row):
-            excluded_qa += 1
-            continue
-
-        label = _normalize_label(row.get("ticket_label"))
-        if criteria.include_labels and label not in criteria.include_labels:
-            excluded_label += 1
-            continue
-        if criteria.exclude_labels and label in criteria.exclude_labels:
-            excluded_label += 1
-            continue
-
-        department = _normalize_department(row.get("assigned_department"))
-        if criteria.include_departments and department not in criteria.include_departments:
-            excluded_department += 1
-            continue
-        if criteria.exclude_departments and department in criteria.exclude_departments:
-            excluded_department += 1
+        accepted, reason = _row_passes_selection_filters(row, criteria=criteria)
+        if not accepted:
+            if reason == "failed":
+                excluded_failed += 1
+            elif reason == "qa_attention":
+                excluded_qa += 1
+            elif reason == "label":
+                excluded_label += 1
+            elif reason == "department":
+                excluded_department += 1
             continue
 
         if room_id in seen:
@@ -157,8 +286,13 @@ def format_approved_room_ids_file(
         "# Approved room IDs for pilot corpus (local/private; do not commit)",
         f"# source_report: {source_report}",
         f"# selected_count: {len(room_ids)}",
-        "# ordering: replay_report_file_order",
     ]
+    if criteria.label_balance_targets:
+        lines.append("# ordering: label_balanced_deterministic")
+        for label in sorted(criteria.label_balance_targets):
+            lines.append(f"# balance_label_{label}: {criteria.label_balance_targets[label]}")
+    else:
+        lines.append("# ordering: replay_report_file_order")
     if criteria.limit is not None:
         lines.append(f"# limit: {criteria.limit}")
     if criteria.include_labels:

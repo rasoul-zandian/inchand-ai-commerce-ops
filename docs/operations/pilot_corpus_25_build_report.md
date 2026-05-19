@@ -1,6 +1,7 @@
 # Pilot Corpus 25 Build Report
 
 **Status:** Integrity verified (local build) — embeddings and indexing **not** started  
+**Note:** First build was **label-imbalanced** (support 16, complaint 9, fund 0). For balanced rebuild guidance see [balanced pilot corpus rebuild](balanced_pilot_corpus_rebuild.md).  
 **Audience:** Retrieval platform, AI governance, data operations
 
 ---
@@ -95,8 +96,9 @@ The checker prints **aggregate summary only** (no transcripts).
 
 - Corpus is approved as a **pilot artifact** for offline evaluation planning (human sign-off + approved room list).
 - Corpus is **not** indexed; retrieval is **not** activated.
-- Embeddings are **not** generated.
-- Future steps (embeddings, pgvector, semantic RAG in runtime) require **separate** governance approval.
+- Embeddings are **not** generated (`embedding_status=not_started`).
+- Embedding vectors are **sensitive derived artifacts** — see [offline embedding generation plan](offline_embedding_generation_plan.md); default output under gitignored `artifacts/embeddings/`.
+- Future steps (embedding execution, pgvector, semantic RAG in runtime) require **separate** governance approval; `indexing_status` remains **`not_started`**.
 
 ---
 
@@ -104,7 +106,7 @@ The checker prints **aggregate summary only** (no transcripts).
 
 1. **Follow [repository policy](pilot_corpus_repository_policy.md)** — corpus remains **local-only**; do not commit `corpus/vendor_ticket_real_pilot/` until explicit governance approval.
 2. **Add integrity check to CI** only after a repository policy decision to store corpus in-repo (`check_pilot_corpus_integrity.py` is available but not wired into `make ci` by default).
-3. **Plan offline embedding generation** in a separate step (mock/small-batch first; no production activation).
+3. **Embedding artifacts** — mock: [mock integrity report](mock_embedding_artifact_integrity_report.md); real OpenAI (local): [real integrity report](real_embedding_artifact_integrity_report.md); artifacts gitignored.
 4. **Do not index into pgvector** until embedding and eval plans are approved and documented.
 
-Related: [Pilot corpus planning](pilot_corpus_planning.md), [Reviewer sign-off workflow](reviewer_signoff_workflow.md), [Redacted replay execution report](redacted_replay_166_ticket_execution_report.md).
+Related: [Pilot corpus planning](pilot_corpus_planning.md), [Repository policy](pilot_corpus_repository_policy.md), [Reviewer sign-off workflow](reviewer_signoff_workflow.md), [Redacted replay execution report](redacted_replay_166_ticket_execution_report.md).

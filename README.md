@@ -943,6 +943,98 @@ PYTHONPATH=. python3.11 scripts/build_pilot_corpus.py \
 
 **Pilot corpus 25 build report:** [`docs/operations/pilot_corpus_25_build_report.md`](docs/operations/pilot_corpus_25_build_report.md) — first controlled 25-record pilot corpus (integrity verification, no embeddings/indexing).
 
+**Balanced pilot corpus rebuild (Step 121):** [`docs/operations/balanced_pilot_corpus_rebuild.md`](docs/operations/balanced_pilot_corpus_rebuild.md) — rebalance approved rooms (~10 support / ~7 complaint / ~5–8 fund) after Step 120 showed **`fund=0`** in sandbox index. Selection helper:
+
+```bash
+PYTHONPATH=. python3.11 scripts/select_approved_room_ids.py \
+  reports/replay_166_redacted.jsonl \
+  -o data/private/approved_room_ids.txt \
+  --balance-pilot \
+  --exclude-qa-attention \
+  --overwrite
+```
+
+Human reviewer must confirm the list before `build_pilot_corpus.py`. Full operator flow (corpus → embeddings → pgvector → eval) is in the rebuild doc. **No retrieval activation.**
+
+**Step 122 local execution:** [pilot balanced rebuild execution report](docs/operations/pilot_balanced_rebuild_execution_report.md) — balanced corpus indexed as `vendor_ticket_real_pilot_balanced` / `pilot_balanced_v1`; fund count **8**.
+
+**Step 123 eval calibration (v4):** eval cases no longer pin `metadata_filter.namespace`/`index_version`; compare-mode **metadata_filtered pass_rate=1.0** on fund subset; vector_only **0.90** (one `must_not_return_labels` edge on `pilot-fund-wallet-fa-016`).
+
+**Sandbox retrieval tool (Steps 125–127):** [`docs/operations/sandbox_retrieval_tool_contract.md`](docs/operations/sandbox_retrieval_tool_contract.md) — contract models (`app/corpus_planning/retrieval_tool_models.py`) + local executor (`app/corpus_planning/sandbox_retrieval_tool.py`). Local smoke test: [`docs/operations/sandbox_retrieval_tool_smoke_test_report.md`](docs/operations/sandbox_retrieval_tool_smoke_test_report.md). **Not** LangGraph, **not** production `RAG_PROFILE`, **not** customer-facing.
+
+**LangGraph retrieval integration (Step 128, plan only):** [`docs/operations/langgraph_retrieval_integration_plan.md`](docs/operations/langgraph_retrieval_integration_plan.md) — future LangGraph wiring proposal; **no** runtime activation, **no** graph nodes in this step.
+
+**Retrieval policy gate (Step 129, contract only):** [`docs/operations/retrieval_policy_gate_contract.md`](docs/operations/retrieval_policy_gate_contract.md) — `evaluate_retrieval_policy_gate` allow/skip/deny before search; **no** pgvector/OpenAI/LangGraph in this step.
+
+**LangGraph retrieval state fields (Step 130, contract only):** additive `retrieval_*` keys on `CommerceAIState` + helpers in `app/state/retrieval_state.py`; **no** retrieval node or runtime activation.
+
+**Sandbox retrieval chain dry-run (Steps 131–132):** policy gate → executor → state snapshot — **not** LangGraph, **not** production, **not** customer-facing. Local chain smoke test: [`docs/operations/dry_run_retrieval_chain_smoke_test_report.md`](docs/operations/dry_run_retrieval_chain_smoke_test_report.md).
+
+**LangGraph sandbox retrieval node (Steps 133–135):** [`docs/operations/langgraph_sandbox_retrieval_node_plan.md`](docs/operations/langgraph_sandbox_retrieval_node_plan.md) — shadow node `sandbox_retrieve_pilot_shadow` implemented; default `LANGGRAPH_SANDBOX_RETRIEVAL_ENABLED=false`; sanitized `retrieval_*` metadata only; **not** used for draft/final responses. Local shadow smoke test: [`docs/operations/langgraph_shadow_retrieval_smoke_test_report.md`](docs/operations/langgraph_shadow_retrieval_smoke_test_report.md).
+
+**Shadow retrieval metrics dashboard (Step 136):** aggregate sanitized shadow replay JSONL → gitignored `reports/shadow_retrieval_metrics_dashboard.md` via `scripts/build_shadow_retrieval_metrics_dashboard.py` (no raw content; rejects `retrieval_activated=true`).
+
+**Shadow replay JSONL export (Steps 137, 140, 142):** export sanitized shadow replay rows from local ticket JSONL → gitignored `reports/shadow_replay_*.jsonl` via `scripts/export_shadow_replay_jsonl.py` (requires `--confirm-sandbox` and `LANGGRAPH_SANDBOX_RETRIEVAL_ENABLED=true` for chain execution; Step 142 aligns metadata filter to `ticket_label` + `route_label` only; no raw content).
+
+```bash
+PYTHONPATH=. LANGGRAPH_SANDBOX_RETRIEVAL_ENABLED=true python3.11 \
+  scripts/export_shadow_replay_jsonl.py \
+  data/private/vendor_tickets_400.redacted.jsonl \
+  --output reports/shadow_replay_balanced_v1.jsonl \
+  --namespace vendor_ticket_real_pilot_balanced \
+  --index-version pilot_balanced_v1 \
+  --profile semantic_pgvector \
+  --confirm-sandbox
+
+PYTHONPATH=. python3.11 scripts/build_shadow_retrieval_metrics_dashboard.py \
+  reports/shadow_replay_balanced_v1.jsonl --overwrite
+```
+
+**Shadow replay metrics report (Step 138):** governance summary of local 166-ticket shadow batch — [`docs/operations/shadow_replay_metrics_report.md`](docs/operations/shadow_replay_metrics_report.md) (aggregate metrics only; no raw content).
+
+**Shadow replay metrics refresh (Step 143):** corrected metrics after Step 142 filter alignment — [`docs/operations/shadow_replay_metrics_refresh_report.md`](docs/operations/shadow_replay_metrics_refresh_report.md) (`result_count_distribution` 5/166; `retrieval_activated_true_count=0`).
+
+**Non-shadow retrieval consumption governance (Step 144, plan only):** [`docs/operations/non_shadow_retrieval_consumption_governance_plan.md`](docs/operations/non_shadow_retrieval_consumption_governance_plan.md) — approval gates before sandbox retrieval metadata may leave shadow-only observability; **only HITL-only visibility** may be considered next; draft-assist and customer-facing retrieval **blocked**; helpers in `app/corpus_planning/retrieval_consumption_governance.py` (governance check only; no runtime activation).
+
+**Vendor ticket AI assist shadow workflow (Steps 145–148):** [`docs/operations/vendor_ticket_ai_assist_shadow_workflow.md`](docs/operations/vendor_ticket_ai_assist_shadow_workflow.md) — rule-based **shadow-only** operational assist; LangGraph node `vendor_ticket_ai_assist_shadow`; offline export + dashboard; default `VENDOR_TICKET_AI_ASSIST_SHADOW_ENABLED=false`. **Not** HITL UI, **not** customer-facing, **not** auto-send, **not** draft/final consumption.
+
+**AI assist shadow metrics report (Step 149):** [`docs/operations/ai_assist_shadow_metrics_report.md`](docs/operations/ai_assist_shadow_metrics_report.md) — validated 166-ticket batch after Step 148 DB fix (`error_count=0`; `monitor=109`, `escalate=37`, `billing_review=20`; activation/consumption zero). Export: `scripts/export_ai_assist_shadow_replay_jsonl.py`, dashboard `scripts/build_ai_assist_shadow_metrics_dashboard.py`.
+
+**Retrieval policy gate calibration (Step 139):** synthetic allow/skip/deny fixtures — [`evals/retrieval_policy_gate/policy_gate_calibration_cases.json`](evals/retrieval_policy_gate/policy_gate_calibration_cases.json), runner `scripts/eval_retrieval_policy_gate.py`, report [`docs/operations/retrieval_policy_gate_calibration_report.md`](docs/operations/retrieval_policy_gate_calibration_report.md) (no pgvector/OpenAI).
+
+**Shadow replay hit-count diagnosis (Step 141):** `scripts/diagnose_shadow_replay_hits.py` — explains zero `retrieval_result_count` when export metadata filters over-constrain vs pgvector index (see `docs/operations/shadow_replay_metrics_report.md`).
+
+```bash
+PYTHONPATH=. python3.11 scripts/eval_retrieval_policy_gate.py --overwrite
+```
+
+```bash
+PYTHONPATH=. python3.11 scripts/dry_run_sandbox_retrieval_chain.py \
+  --query "settlement payment status" \
+  --ticket-label fund \
+  --route-label billing_review \
+  --namespace vendor_ticket_real_pilot_balanced \
+  --index-version pilot_balanced_v1 \
+  --profile semantic_pgvector \
+  --top-k 5 \
+  --confirm-sandbox
+```
+
+Requires `--confirm-sandbox`, local Postgres, and `OPENAI_API_KEY` only when the gate **allows** execution. Output is a safe retrieval state snapshot (`query_hash` only; no transcripts/vectors/hits).
+
+```bash
+PYTHONPATH=. python3.11 scripts/run_sandbox_retrieval_tool.py \
+  --query "settlement payment status" \
+  --namespace vendor_ticket_real_pilot_balanced \
+  --index-version pilot_balanced_v1 \
+  --profile semantic_pgvector \
+  --top-k 5 \
+  --ticket-label fund \
+  --confirm-sandbox
+```
+
+Requires `OPENAI_API_KEY` (query embedding only), local Postgres, and `--confirm-sandbox`. Output is safe JSON (`query_hash` only; no transcripts/vectors).
+
 **Pilot corpus integrity check** (offline, aggregate output only):
 
 ```bash
@@ -952,13 +1044,113 @@ PYTHONPATH=. python3.11 scripts/check_pilot_corpus_integrity.py \
 
 **Pilot corpus repository policy:** [`docs/operations/pilot_corpus_repository_policy.md`](docs/operations/pilot_corpus_repository_policy.md) — **`corpus/vendor_ticket_real_pilot/` is local-only and gitignored by default**; do not commit real corpus artifacts until explicit governance approval. Commit code, docs, and tests only.
 
+**Offline embedding generation plan:** [`docs/operations/offline_embedding_generation_plan.md`](docs/operations/offline_embedding_generation_plan.md) — planning only; derived vectors are **sensitive** and stay under gitignored `artifacts/embeddings/`; corpus `indexing_status` remains **`not_started`**.
+
+**Mock embedding dry-run** (`mock` provider only — no OpenAI, no pgvector):
+
+```bash
+PYTHONPATH=. python3.11 scripts/build_pilot_corpus_embeddings.py \
+  corpus/vendor_ticket_real_pilot \
+  --output-dir artifacts/embeddings/vendor_ticket_real_pilot \
+  --provider mock \
+  --model mock-embedding-1536 \
+  --dimensions 1536
+```
+
+**Real OpenAI embeddings (local only)** — requires `OPENAI_API_KEY`, `--provider openai`, and `--confirm-real-openai`:
+
+```bash
+PYTHONPATH=. python3.11 scripts/build_pilot_corpus_embeddings.py \
+  corpus/vendor_ticket_real_pilot \
+  --output-dir artifacts/embeddings/vendor_ticket_real_pilot_openai \
+  --provider openai \
+  --model text-embedding-3-small \
+  --dimensions 1536 \
+  --confirm-real-openai
+```
+
+Then run `check_embedding_artifact_integrity.py` on the OpenAI output directory. **No pgvector indexing** in this step.
+
+**Real embedding integrity report:** [`docs/operations/real_embedding_artifact_integrity_report.md`](docs/operations/real_embedding_artifact_integrity_report.md) — sanitized record of local OpenAI run (25 records, `real_generated`, integrity passed).
+
+**PgVector sandbox indexing plan:** [`docs/operations/pgvector_sandbox_indexing_plan.md`](docs/operations/pgvector_sandbox_indexing_plan.md) — sandbox/local pgvector indexing for 1536-D pilot embeddings; **does not activate retrieval**; eval gates required before production retrieval.
+
+**PgVector sandbox indexing (local only)** — requires local Postgres (`make pg-up` / `make pg-init`), real OpenAI artifacts, `--confirm-sandbox`, and profile **`semantic_pgvector`** only (not `semantic_pgvector_16`):
+
+```bash
+PYTHONPATH=. python3.11 scripts/index_pilot_embeddings_pgvector.py \
+  artifacts/embeddings/vendor_ticket_real_pilot_openai \
+  --namespace vendor_ticket_real_pilot \
+  --index-version pilot_v1 \
+  --profile semantic_pgvector \
+  --confirm-sandbox
+```
+
+Uses `PGVECTOR_DATABASE_URL` (default local `127.0.0.1`). Writes aggregate summary to gitignored `reports/pgvector_sandbox_indexing_pilot_v1.json`. **No LangGraph / `RAG_PROFILE` changes**.
+
+**Pilot retrieval evaluation (local only)** — after sandbox indexing; requires `OPENAI_API_KEY` for query embeddings (same model as index); **does not activate retrieval**:
+
+```bash
+PYTHONPATH=. python3.11 scripts/eval_pilot_retrieval.py \
+  --cases evals/pilot_retrieval/vendor_ticket_real_pilot_cases.json \
+  --namespace vendor_ticket_real_pilot \
+  --index-version pilot_v1 \
+  --profile semantic_pgvector \
+  --top-k 5 \
+  --output reports/pilot_retrieval_eval_pilot_v1.json \
+  --overwrite
+
+# Compare vector-only vs metadata-filtered (fund/finance cases with metadata_filter)
+PYTHONPATH=. python3.11 scripts/eval_pilot_retrieval.py \
+  --cases evals/pilot_retrieval/vendor_ticket_real_pilot_cases.json \
+  --namespace vendor_ticket_real_pilot \
+  --index-version pilot_v1 \
+  --profile semantic_pgvector \
+  --compare-modes \
+  --output reports/pilot_retrieval_eval_pilot_v1.json \
+  --overwrite
+```
+
+Eval cases: `evals/pilot_retrieval/vendor_ticket_real_pilot_cases.json` (v4 — English + Persian finance). **Metadata filter calibration:** use `ticket_label` / `route_label` only; do **not** pin `metadata_filter.namespace` or `index_version` (pilot scope from CLI `--namespace` / `--index-version`). Do **not** use `department` in filters unless inventory shows explicit `metadata.department`. `--compare-modes` runs `vector_only` vs `metadata_filtered` with `delta_pass_rate` / `delta_wrong_label_return_count`.
+
+**Pilot pgvector metadata inventory** (diagnose filter/schema mismatches; local sandbox only):
+
+```bash
+PYTHONPATH=. python3.11 scripts/inspect_pilot_pgvector_metadata.py \
+  --namespace vendor_ticket_real_pilot \
+  --index-version pilot_v1 \
+  --profile semantic_pgvector \
+  --output reports/pilot_pgvector_metadata_inventory_pilot_v1.json \
+  --overwrite
+```
+
+Aggregate counts only (`ticket_label_counts`, `route_label_counts`, `missing_field_counts`) — no content, vectors, or transcripts.
+
+**Pilot retrieval evaluation report:** [`docs/operations/pilot_retrieval_evaluation_report.md`](docs/operations/pilot_retrieval_evaluation_report.md) — first sandbox run `pass_rate=0.6667` (imbalanced index); after [balanced rebuild](docs/operations/balanced_pilot_corpus_rebuild.md) + eval v4: **metadata_filtered fund subset 10/10**, `retrieval_activated=false`. **Decision (Step 124):** `retrieval_ready_for_sandbox_tooling_review` — sandbox tooling review may proceed; **does not** approve LangGraph, production `RAG_PROFILE`, or customer-facing retrieval. **Failure analysis:** [`docs/operations/pilot_retrieval_failure_analysis.md`](docs/operations/pilot_retrieval_failure_analysis.md).
+
+**Embedding artifact integrity check** (aggregate output only; no vectors or transcripts):
+
+```bash
+# Mock artifacts
+PYTHONPATH=. python3.11 scripts/check_embedding_artifact_integrity.py \
+  artifacts/embeddings/vendor_ticket_real_pilot
+
+# Real OpenAI artifacts
+PYTHONPATH=. python3.11 scripts/check_embedding_artifact_integrity.py \
+  artifacts/embeddings/vendor_ticket_real_pilot_openai
+```
+
+Reports: [mock](docs/operations/mock_embedding_artifact_integrity_report.md) · [real OpenAI](docs/operations/real_embedding_artifact_integrity_report.md)
+
+**Real OpenAI embedding generation plan:** [`docs/operations/real_openai_embedding_generation_plan.md`](docs/operations/real_openai_embedding_generation_plan.md) — **planning only**; requires mock dry-run + artifact integrity first; future output under gitignored `artifacts/embeddings/vendor_ticket_real_pilot_openai/`; **no OpenAI calls in CI**; pgvector indexing remains blocked.
+
 ### Reviewer Sign-off Workflow
 
 Human reviewers must explicitly approve any pilot corpus scope **before** a corpus builder exists. This is governance metadata only — not production moderation and not automatic corpus generation.
 
 - **Doc:** [`docs/operations/reviewer_signoff_workflow.md`](docs/operations/reviewer_signoff_workflow.md)
 - **Contracts:** `app/corpus_planning/reviewer_models.py`, `app/corpus_planning/reviewer_builders.py`
-- **Local execution:** `scripts/create_reviewer_signoff.py`, `scripts/select_approved_room_ids.py`, `scripts/validate_approved_room_ids.py` → outputs under `data/private/`
+- **Local execution:** `scripts/create_reviewer_signoff.py`, `scripts/select_approved_room_ids.py` (`--balance-pilot` for label-balanced ~25 rooms), `scripts/validate_approved_room_ids.py` → outputs under `data/private/`
 - **Checklist:** `no_raw_pii_visible`, `anonymization_verified`, `retrieval_safe`, `governance_approved`, `corpus_scope_validated` — all must pass for `decision=approved` (each via `--check`)
 - **Gate:** `corpus_ready_after_signoff()` requires replay + privacy review complete, `approved` decision, full checklist pass
 - **Principle:** AI cannot self-approve; room selection suggests candidates — human confirms before `build_pilot_corpus.py`

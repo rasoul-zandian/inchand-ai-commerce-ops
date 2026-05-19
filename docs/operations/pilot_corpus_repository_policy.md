@@ -15,6 +15,7 @@ Related:
 
 - [Pilot corpus 25 build report](pilot_corpus_25_build_report.md)
 - [Pilot corpus planning](pilot_corpus_planning.md)
+- [Offline embedding generation plan](offline_embedding_generation_plan.md)
 - [Reviewer sign-off workflow](reviewer_signoff_workflow.md)
 
 ---
@@ -132,6 +133,9 @@ Until then, treat the corpus as **local-only**.
 |------|----------------|
 | `corpus/vendor_ticket_real_pilot/` in git | **No** (gitignored) |
 | `data/private/`, `reports/` in git | **No** (gitignored) |
-| Embeddings generated | **No** (`not_started`) |
+| Mock embedding dry-run | `scripts/build_pilot_corpus_embeddings.py` — **mock only**, local artifacts |
+| Real OpenAI embedding plan | [real_openai_embedding_generation_plan.md](real_openai_embedding_generation_plan.md) — **not executed** |
+| Corpus manifest `embedding_status` | `not_started` (unchanged by dry-run) |
+| Embedding artifacts in git | **No** — `artifacts/embeddings/` gitignored |
 | pgvector indexing | **No** (`not_started`) |
 | Retrieval activation | **No** |

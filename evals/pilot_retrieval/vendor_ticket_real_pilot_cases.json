@@ -1,0 +1,224 @@
+{
+  "eval_version": "4",
+  "workflow_type": "vendor_ticket_real_pilot",
+  "description": "Pilot retrieval eval v4: metadata_filter uses stored fields (ticket_label, route_label) only; pilot scope from CLI namespace/index_version.",
+  "metadata_filter_calibration_note": "department is scoring-only; do not use metadata_filter.department unless explicit metadata.department exists on index rows. Do not pin metadata_filter.namespace or index_version — PilotScopedVectorStore uses CLI --namespace and --index-version.",
+  "cases": [
+    {
+      "case_id": "pilot-support-general-001",
+      "query": "vendor needs help with a general support issue on the platform",
+      "expected_ticket_label": "support",
+      "expected_department": "support",
+      "expected_room_ids": [],
+      "must_not_return_labels": [],
+      "eval_mode": "vector_only",
+      "notes": "General vendor support intent"
+    },
+    {
+      "case_id": "pilot-support-account-002",
+      "query": "seller cannot access vendor dashboard and needs account assistance",
+      "expected_ticket_label": "support",
+      "expected_department": "support",
+      "expected_room_ids": [],
+      "must_not_return_labels": ["fund"],
+      "eval_mode": "vector_only",
+      "notes": "Account access support; should not route to fund label"
+    },
+    {
+      "case_id": "pilot-complaint-escalation-003",
+      "query": "unresolved vendor complaint requires escalation and senior review",
+      "expected_ticket_label": "complaint",
+      "expected_department": "complaint",
+      "expected_room_ids": [],
+      "must_not_return_labels": [],
+      "eval_mode": "vector_only",
+      "notes": "Complaint escalation category"
+    },
+    {
+      "case_id": "pilot-complaint-service-004",
+      "query": "vendor reports repeated poor service quality and wants complaint handling",
+      "expected_ticket_label": "complaint",
+      "expected_department": "complaint",
+      "expected_room_ids": [],
+      "must_not_return_labels": ["fund"],
+      "eval_mode": "vector_only",
+      "notes": "Service quality complaint isolation"
+    },
+    {
+      "case_id": "pilot-fund-settlement-005",
+      "query": "vendor settlement amount does not match expected payout schedule",
+      "expected_ticket_label": "fund",
+      "expected_department": "finance",
+      "expected_room_ids": [],
+      "must_not_return_labels": [],
+      "eval_mode": "vector_only",
+      "metadata_filter": {
+        "ticket_label": "fund"
+      },
+      "notes": "Settlement / fund query (English); compare-modes uses ticket_label filter"
+    },
+    {
+      "case_id": "pilot-fund-billing-006",
+      "query": "question about vendor billing adjustment and payment reconciliation",
+      "expected_ticket_label": "fund",
+      "expected_department": "finance",
+      "expected_room_ids": [],
+      "must_not_return_labels": ["complaint"],
+      "eval_mode": "vector_only",
+      "metadata_filter": {
+        "ticket_label": "fund",
+        "route_label": "billing_review"
+      },
+      "notes": "Finance-like billing query (English); ticket_label + billing_review route"
+    },
+    {
+      "case_id": "pilot-finance-invoice-007",
+      "query": "vendor invoice discrepancy needs finance department review",
+      "expected_ticket_label": "fund",
+      "expected_department": "finance",
+      "expected_room_ids": [],
+      "must_not_return_labels": [],
+      "eval_mode": "vector_only",
+      "metadata_filter": {
+        "ticket_label": "fund",
+        "route_label": "billing_review"
+      },
+      "notes": "Explicit finance intent (English); stored route_label filter"
+    },
+    {
+      "case_id": "pilot-support-isolation-008",
+      "query": "standard vendor onboarding question about platform usage",
+      "expected_ticket_label": "support",
+      "expected_department": "support",
+      "expected_room_ids": [],
+      "must_not_return_labels": ["complaint", "fund"],
+      "eval_mode": "vector_only",
+      "notes": "Wrong-label isolation: support only in top-k"
+    },
+    {
+      "case_id": "pilot-vendor-general-009",
+      "query": "generic vendor support request about listing status",
+      "expected_ticket_label": "support",
+      "expected_department": "support",
+      "expected_room_ids": [],
+      "must_not_return_labels": [],
+      "eval_mode": "vector_only",
+      "notes": "Generic vendor support"
+    },
+    {
+      "case_id": "pilot-complaint-priority-010",
+      "query": "high priority vendor complaint about SLA breach",
+      "expected_ticket_label": "complaint",
+      "expected_department": "complaint",
+      "expected_room_ids": [],
+      "must_not_return_labels": ["fund"],
+      "eval_mode": "vector_only",
+      "notes": "Priority complaint routing"
+    },
+    {
+      "case_id": "pilot-fund-status-011",
+      "query": "vendor asks for status of pending fund transfer to seller wallet",
+      "expected_ticket_label": "fund",
+      "expected_department": "finance",
+      "expected_room_ids": [],
+      "must_not_return_labels": ["support"],
+      "eval_mode": "vector_only",
+      "metadata_filter": {
+        "ticket_label": "fund"
+      },
+      "notes": "Fund transfer status query (English)"
+    },
+    {
+      "case_id": "pilot-support-shipping-012",
+      "query": "vendor support issue about shipment delay notification settings",
+      "expected_ticket_label": "support",
+      "expected_department": "support",
+      "expected_room_ids": [],
+      "must_not_return_labels": ["complaint"],
+      "eval_mode": "vector_only",
+      "notes": "Operational support (non-complaint)"
+    },
+    {
+      "case_id": "pilot-fund-settlement-fa-013",
+      "query": "مغایرت مبلغ تسویه فروشنده با برنامه پرداخت",
+      "expected_ticket_label": "fund",
+      "expected_department": "finance",
+      "expected_room_ids": [],
+      "must_not_return_labels": ["support"],
+      "eval_mode": "metadata_filtered",
+      "metadata_filter": {
+        "ticket_label": "fund",
+        "route_label": "billing_review"
+      },
+      "notes": "Persian operational settlement mismatch"
+    },
+    {
+      "case_id": "pilot-fund-billing-fa-014",
+      "query": "درخواست بررسی اصلاحیه صورتحساب و تطبیق پرداخت فروشنده",
+      "expected_ticket_label": "fund",
+      "expected_department": "finance",
+      "expected_room_ids": [],
+      "must_not_return_labels": ["complaint"],
+      "eval_mode": "metadata_filtered",
+      "metadata_filter": {
+        "ticket_label": "fund",
+        "route_label": "billing_review"
+      },
+      "notes": "Persian billing adjustment / reconciliation"
+    },
+    {
+      "case_id": "pilot-finance-invoice-fa-015",
+      "query": "مغایرت فاکتور فروشنده و نیاز به بررسی واحد مالی",
+      "expected_ticket_label": "fund",
+      "expected_department": "finance",
+      "expected_room_ids": [],
+      "must_not_return_labels": [],
+      "eval_mode": "metadata_filtered",
+      "metadata_filter": {
+        "ticket_label": "fund"
+      },
+      "notes": "Persian invoice discrepancy"
+    },
+    {
+      "case_id": "pilot-fund-wallet-fa-016",
+      "query": "پیگیری وضعیت انتقال وجه تسویه به کیف پول فروشنده و زمان پرداخت",
+      "expected_ticket_label": "fund",
+      "expected_department": "finance",
+      "expected_room_ids": [],
+      "must_not_return_labels": ["support"],
+      "eval_mode": "metadata_filtered",
+      "metadata_filter": {
+        "ticket_label": "fund"
+      },
+      "notes": "Persian fund transfer / settlement to seller wallet (v4 query calibration)"
+    },
+    {
+      "case_id": "pilot-fund-adjustment-fa-017",
+      "query": "درخواست بررسی کسورات و تعدیل مالی قرارداد فروشنده",
+      "expected_ticket_label": "fund",
+      "expected_department": "finance",
+      "expected_room_ids": [],
+      "must_not_return_labels": [],
+      "eval_mode": "metadata_filtered",
+      "metadata_filter": {
+        "ticket_label": "fund",
+        "route_label": "billing_review"
+      },
+      "notes": "Persian financial adjustment intent"
+    },
+    {
+      "case_id": "pilot-fund-reconcile-fa-018",
+      "query": "مغایرت گزارش مالی دوره‌ای با مانده تسویه‌شده",
+      "expected_ticket_label": "fund",
+      "expected_department": "finance",
+      "expected_room_ids": [],
+      "must_not_return_labels": ["support", "complaint"],
+      "eval_mode": "metadata_filtered",
+      "metadata_filter": {
+        "ticket_label": "fund",
+        "route_label": "billing_review"
+      },
+      "notes": "Persian periodic reconciliation; pilot scope from CLI (v4)"
+    }
+  ]
+}

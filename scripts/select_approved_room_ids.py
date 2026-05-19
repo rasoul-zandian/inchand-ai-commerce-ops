@@ -11,6 +11,7 @@ from app.corpus_planning.room_selection import (
     RoomSelectionCriteria,
     format_approved_room_ids_file,
     load_replay_rows_in_order,
+    parse_label_balance_targets,
     select_approved_room_ids_from_rows,
 )
 
@@ -58,6 +59,21 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Exclude rows flagged for QA attention",
     )
+    parser.add_argument(
+        "--balance-pilot",
+        action="store_true",
+        help="Balanced ~25-room pilot targets (support=10, complaint=7, fund=8)",
+    )
+    parser.add_argument(
+        "--balance-label",
+        action="append",
+        default=[],
+        metavar="LABEL=COUNT",
+        help=(
+            "Per-label quota for balanced selection "
+            "(repeatable; overrides --balance-pilot defaults)"
+        ),
+    )
     args = parser.parse_args(argv)
 
     if not args.report_path.is_file():
@@ -69,6 +85,29 @@ def main(argv: list[str] | None = None) -> int:
     if args.limit is not None and args.limit < 1:
         print("select_approved_room_ids: --limit must be >= 1", file=sys.stderr)
         return 1
+    if args.balance_pilot and args.limit is not None:
+        print(
+            "select_approved_room_ids: --balance-pilot cannot be used with --limit",
+            file=sys.stderr,
+        )
+        return 1
+    if args.balance_label and args.limit is not None:
+        print(
+            "select_approved_room_ids: --balance-label cannot be used with --limit",
+            file=sys.stderr,
+        )
+        return 1
+
+    label_balance_targets: dict[str, int] | None = None
+    if args.balance_pilot or args.balance_label:
+        try:
+            if args.balance_label:
+                label_balance_targets = parse_label_balance_targets(args.balance_label)
+            else:
+                label_balance_targets = parse_label_balance_targets([])
+        except ValueError as exc:
+            print(f"select_approved_room_ids: {exc}", file=sys.stderr)
+            return 1
 
     def _norm_list(values: list[str]) -> frozenset[str]:
         return frozenset(item.strip().lower() for item in values if item.strip())
@@ -80,6 +119,7 @@ def main(argv: list[str] | None = None) -> int:
         include_departments=_norm_list(args.include_department),
         exclude_departments=_norm_list(args.exclude_department),
         exclude_qa_attention=args.exclude_qa_attention,
+        label_balance_targets=label_balance_targets,
     )
 
     try:
@@ -104,6 +144,15 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  total_rows_scanned={result.total_rows_scanned}")
     print(f"  excluded_failed={result.excluded_failed}")
     print(f"  excluded_qa_attention={result.excluded_qa_attention}")
+    if result.label_target_counts:
+        for label in sorted(result.label_target_counts):
+            selected = result.label_selected_counts.get(label, 0)
+            target = result.label_target_counts[label]
+            print(f"  label_{label}={selected}/{target}")
+        shortfalls = result.label_shortfalls
+        if shortfalls:
+            joined = ", ".join(f"{label}={count}" for label, count in sorted(shortfalls.items()))
+            print(f"  label_shortfall={joined}", file=sys.stderr)
     return 0
 
 

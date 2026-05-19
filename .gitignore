@@ -5,3 +5,6 @@ __pycache__/
 reports/
 data/private/
 corpus/vendor_ticket_real_pilot/
+corpus/vendor_ticket_real_pilot_balanced/
+artifacts/embeddings/
+artifacts/vector_indexes/

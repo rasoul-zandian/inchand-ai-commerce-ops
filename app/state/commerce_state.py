@@ -1,6 +1,6 @@
 """Shared LangGraph state contract for Inchand AI commerce workflows."""
 
-from typing import Any, TypedDict
+from typing import Any, NotRequired, TypedDict
 
 from app.schemas.workflow import (
     ApprovalStatus,
@@ -69,3 +69,23 @@ class CommerceAIState(TypedDict):
 
     errors: list[ToolError]
     audit_log: list[AuditLogEntry]
+
+    # Additive sandbox retrieval fields (Step 130; optional — not set by default graph nodes)
+    retrieval_gate_decision: NotRequired[str | None]
+    retrieval_scenario: NotRequired[str | None]
+    retrieval_policy_reasons: NotRequired[list[str]]
+    retrieval_query_hash: NotRequired[str | None]
+    retrieval_result_count: NotRequired[int | None]
+    retrieval_metadata_filter: NotRequired[dict[str, str] | None]
+    retrieval_sandbox_only: NotRequired[bool]
+    retrieval_activated: NotRequired[bool]
+
+    # Additive shadow AI assist fields (Step 146; optional — HITL metadata only)
+    ai_assist_shadow_generated: NotRequired[bool]
+    ai_assist_suggested_priority: NotRequired[str | None]
+    ai_assist_escalation_recommended: NotRequired[bool | None]
+    ai_assist_duplicate_possible: NotRequired[bool | None]
+    ai_assist_suggested_action: NotRequired[str | None]
+    ai_assist_confidence_band: NotRequired[str | None]
+    ai_assist_human_review_required: NotRequired[bool]
+    ai_assist_shadow_only: NotRequired[bool]

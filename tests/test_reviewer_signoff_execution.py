@@ -8,8 +8,10 @@ from pathlib import Path
 import pytest
 from app.corpus_planning.reviewer_models import ReviewerDecision, ReviewerRole
 from app.corpus_planning.room_selection import (
+    DEFAULT_PILOT_LABEL_BALANCE_TARGETS,
     RoomSelectionCriteria,
     format_approved_room_ids_file,
+    parse_label_balance_targets,
     select_approved_room_ids_from_rows,
     validate_approved_room_ids_against_export,
 )
@@ -115,6 +117,73 @@ def test_selection_excludes_qa_attention() -> None:
         criteria=RoomSelectionCriteria(exclude_qa_attention=True),
     )
     assert result.selected_room_ids == ["ROOM_OK"]
+
+
+def test_balanced_selection_fills_label_quotas_in_deterministic_order() -> None:
+    rows = [
+        _replay_row(room_id="S1", label="support"),
+        _replay_row(room_id="F1", label="fund"),
+        _replay_row(room_id="C1", label="complaint"),
+        _replay_row(room_id="S2", label="support"),
+        _replay_row(room_id="F2", label="fund"),
+        _replay_row(room_id="C2", label="complaint"),
+    ]
+    result = select_approved_room_ids_from_rows(
+        rows,
+        criteria=RoomSelectionCriteria(
+            label_balance_targets={"support": 2, "complaint": 1, "fund": 2},
+        ),
+    )
+    assert result.selected_room_ids == ["C1", "F1", "F2", "S1", "S2"]
+    assert result.label_selected_counts == {"support": 2, "complaint": 1, "fund": 2}
+    assert result.label_shortfalls == {}
+
+
+def test_balanced_selection_reports_shortfall() -> None:
+    rows = [_replay_row(room_id="S1", label="support")]
+    result = select_approved_room_ids_from_rows(
+        rows,
+        criteria=RoomSelectionCriteria(
+            label_balance_targets={"support": 1, "complaint": 1, "fund": 2},
+        ),
+    )
+    assert result.label_shortfalls == {"complaint": 1, "fund": 2}
+
+
+def test_parse_label_balance_targets_defaults() -> None:
+    assert parse_label_balance_targets([]) == DEFAULT_PILOT_LABEL_BALANCE_TARGETS
+
+
+def test_balance_pilot_cli_writes_balanced_file(tmp_path: Path) -> None:
+    rows = []
+    for index in range(10):
+        rows.append(_replay_row(room_id=f"S{index}", label="support"))
+    for index in range(7):
+        rows.append(_replay_row(room_id=f"C{index}", label="complaint"))
+    for index in range(8):
+        rows.append(_replay_row(room_id=f"F{index}", label="fund"))
+
+    report = tmp_path / "replay.jsonl"
+    report.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+    out = tmp_path / "approved.txt"
+    code = select_main(
+        [
+            str(report),
+            "-o",
+            str(out),
+            "--balance-pilot",
+            "--overwrite",
+        ]
+    )
+    assert code == 0
+    text = out.read_text(encoding="utf-8")
+    assert "balance_label_fund: 8" in text
+    assert "label_balanced_deterministic" in text
+    assert "Human reviewer must confirm" in text
+    selected = [line for line in text.splitlines() if line and not line.startswith("#")]
+    assert len(selected) == 25
+    assert selected[0].startswith("C")
+    assert any(room_id.startswith("F") for room_id in selected)
 
 
 def test_selection_respects_labels_and_limit() -> None:

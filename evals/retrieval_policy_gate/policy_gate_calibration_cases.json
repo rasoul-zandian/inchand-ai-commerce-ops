@@ -1,0 +1,237 @@
+{
+  "calibration_version": "1",
+  "description": "Synthetic edge-case fixtures for evaluate_retrieval_policy_gate (no retrieval execution).",
+  "cases": [
+    {
+      "case_id": "allow-support-matching-filter",
+      "input": {
+        "ticket_label": "support",
+        "namespace": "vendor_ticket_real_pilot_balanced",
+        "index_version": "pilot_balanced_v1",
+        "requested_top_k": 5,
+        "sandbox_only": true,
+        "metadata_filter": { "ticket_label": "support" }
+      },
+      "expected_decision": "allow",
+      "expected_scenario": "vendor_support",
+      "expected_reason_contains": "retrieval_allowed"
+    },
+    {
+      "case_id": "allow-complaint-matching-filter",
+      "input": {
+        "ticket_label": "complaint",
+        "namespace": "vendor_ticket_real_pilot_balanced",
+        "index_version": "pilot_balanced_v1",
+        "requested_top_k": 5,
+        "sandbox_only": true,
+        "metadata_filter": { "ticket_label": "complaint" }
+      },
+      "expected_decision": "allow",
+      "expected_scenario": "complaint_review",
+      "expected_reason_contains": "retrieval_allowed"
+    },
+    {
+      "case_id": "allow-fund-matching-filter-billing-route",
+      "input": {
+        "ticket_label": "fund",
+        "route_label": "billing_review",
+        "namespace": "vendor_ticket_real_pilot_balanced",
+        "index_version": "pilot_balanced_v1",
+        "requested_top_k": 5,
+        "sandbox_only": true,
+        "metadata_filter": { "ticket_label": "fund", "route_label": "billing_review" }
+      },
+      "expected_decision": "allow",
+      "expected_scenario": "fund_finance",
+      "expected_reason_contains": "retrieval_allowed"
+    },
+    {
+      "case_id": "allow-fund-matching-filter-no-route",
+      "input": {
+        "ticket_label": "fund",
+        "namespace": "vendor_ticket_real_pilot_balanced",
+        "index_version": "pilot_balanced_v1",
+        "requested_top_k": 5,
+        "sandbox_only": true,
+        "metadata_filter": { "ticket_label": "fund" }
+      },
+      "expected_decision": "allow",
+      "expected_scenario": "fund_finance",
+      "expected_reason_contains": "retrieval_allowed"
+    },
+    {
+      "case_id": "skip-missing-ticket-label",
+      "input": {
+        "namespace": "vendor_ticket_real_pilot_balanced",
+        "index_version": "pilot_balanced_v1",
+        "requested_top_k": 5,
+        "sandbox_only": true
+      },
+      "expected_decision": "skip",
+      "expected_scenario": "unknown",
+      "expected_reason_contains": "ticket_label missing"
+    },
+    {
+      "case_id": "skip-unknown-ticket-label",
+      "input": {
+        "ticket_label": "mystery",
+        "namespace": "vendor_ticket_real_pilot_balanced",
+        "index_version": "pilot_balanced_v1",
+        "requested_top_k": 5,
+        "sandbox_only": true
+      },
+      "expected_decision": "skip",
+      "expected_scenario": "unknown",
+      "expected_reason_contains": "ticket_label missing"
+    },
+    {
+      "case_id": "deny-sandbox-only-false",
+      "input": {
+        "ticket_label": "support",
+        "namespace": "vendor_ticket_real_pilot_balanced",
+        "index_version": "pilot_balanced_v1",
+        "requested_top_k": 5,
+        "sandbox_only": false,
+        "metadata_filter": { "ticket_label": "support" }
+      },
+      "expected_decision": "deny",
+      "expected_scenario": "unknown",
+      "expected_reason_contains": "sandbox_only"
+    },
+    {
+      "case_id": "deny-production-namespace",
+      "input": {
+        "ticket_label": "support",
+        "namespace": "production_corpus",
+        "index_version": "pilot_balanced_v1",
+        "requested_top_k": 5,
+        "sandbox_only": true,
+        "metadata_filter": { "ticket_label": "support" }
+      },
+      "expected_decision": "deny",
+      "expected_scenario": "unknown",
+      "expected_reason_contains": "namespace"
+    },
+    {
+      "case_id": "deny-non-pilot-index-version",
+      "input": {
+        "ticket_label": "support",
+        "namespace": "vendor_ticket_real_pilot_balanced",
+        "index_version": "prod_v1",
+        "requested_top_k": 5,
+        "sandbox_only": true,
+        "metadata_filter": { "ticket_label": "support" }
+      },
+      "expected_decision": "deny",
+      "expected_scenario": "unknown",
+      "expected_reason_contains": "index_version"
+    },
+    {
+      "case_id": "deny-top-k-zero",
+      "input": {
+        "ticket_label": "support",
+        "namespace": "vendor_ticket_real_pilot_balanced",
+        "index_version": "pilot_balanced_v1",
+        "requested_top_k": 0,
+        "sandbox_only": true,
+        "metadata_filter": { "ticket_label": "support" }
+      },
+      "expected_decision": "deny",
+      "expected_scenario": "unknown",
+      "expected_reason_contains": "requested_top_k"
+    },
+    {
+      "case_id": "deny-top-k-eleven",
+      "input": {
+        "ticket_label": "support",
+        "namespace": "vendor_ticket_real_pilot_balanced",
+        "index_version": "pilot_balanced_v1",
+        "requested_top_k": 11,
+        "sandbox_only": true,
+        "metadata_filter": { "ticket_label": "support" }
+      },
+      "expected_decision": "deny",
+      "expected_scenario": "unknown",
+      "expected_reason_contains": "requested_top_k"
+    },
+    {
+      "case_id": "deny-fund-without-metadata-filter",
+      "input": {
+        "ticket_label": "fund",
+        "route_label": "billing_review",
+        "namespace": "vendor_ticket_real_pilot_balanced",
+        "index_version": "pilot_balanced_v1",
+        "requested_top_k": 5,
+        "sandbox_only": true
+      },
+      "expected_decision": "deny",
+      "expected_scenario": "fund_finance",
+      "expected_reason_contains": "metadata_filter"
+    },
+    {
+      "case_id": "deny-fund-wrong-route-label",
+      "input": {
+        "ticket_label": "fund",
+        "route_label": "other_route",
+        "namespace": "vendor_ticket_real_pilot_balanced",
+        "index_version": "pilot_balanced_v1",
+        "requested_top_k": 5,
+        "sandbox_only": true,
+        "metadata_filter": { "ticket_label": "fund" }
+      },
+      "expected_decision": "deny",
+      "expected_scenario": "fund_finance",
+      "expected_reason_contains": "billing_review"
+    },
+    {
+      "case_id": "deny-filter-label-mismatch",
+      "input": {
+        "ticket_label": "fund",
+        "namespace": "vendor_ticket_real_pilot_balanced",
+        "index_version": "pilot_balanced_v1",
+        "requested_top_k": 5,
+        "sandbox_only": true,
+        "metadata_filter": { "ticket_label": "support" }
+      },
+      "expected_decision": "deny",
+      "expected_scenario": "fund_finance",
+      "expected_reason_contains": "does not match"
+    },
+    {
+      "case_id": "deny-metadata-filter-missing-ticket-label",
+      "input": {
+        "ticket_label": "support",
+        "namespace": "vendor_ticket_real_pilot_balanced",
+        "index_version": "pilot_balanced_v1",
+        "requested_top_k": 5,
+        "sandbox_only": true,
+        "metadata_filter": { "route_label": "general_vendor_support" }
+      },
+      "expected_decision": "deny",
+      "expected_scenario": "vendor_support",
+      "expected_reason_contains": "metadata_filter.ticket_label"
+    },
+    {
+      "case_id": "deny-support-without-metadata-filter",
+      "input": {
+        "ticket_label": "support",
+        "namespace": "vendor_ticket_real_pilot_balanced",
+        "index_version": "pilot_balanced_v1",
+        "requested_top_k": 5,
+        "sandbox_only": true
+      },
+      "expected_decision": "deny",
+      "expected_scenario": "vendor_support",
+      "expected_reason_contains": "metadata_filter"
+    },
+    {
+      "case_id": "deny-department-key-in-metadata-filter",
+      "expect_filter_validation_error": true,
+      "metadata_filter_raw": {
+        "ticket_label": "support",
+        "department": "finance"
+      },
+      "expected_validation_error_contains": "forbidden keys"
+    }
+  ]
+}

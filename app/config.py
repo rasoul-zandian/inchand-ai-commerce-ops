@@ -79,6 +79,20 @@ class AppSettings(BaseSettings):
             "or memory (in-process test/dev only)."
         ),
     )
+    langgraph_sandbox_retrieval_enabled: bool = Field(
+        default=False,
+        description=(
+            "When true, run sandbox_retrieve_pilot_shadow in the vendor ticket graph "
+            "(shadow metadata only; does not change draft/final responses). Default false."
+        ),
+    )
+    vendor_ticket_ai_assist_shadow_enabled: bool = Field(
+        default=False,
+        description=(
+            "When true, run vendor_ticket_ai_assist_shadow after sandbox retrieval "
+            "(HITL-only assist metadata; does not change draft/final responses). Default false."
+        ),
+    )
 
     @field_validator("review_action_adapter", mode="before")
     @classmethod

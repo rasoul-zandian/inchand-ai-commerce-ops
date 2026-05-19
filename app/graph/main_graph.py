@@ -25,7 +25,9 @@ from app.nodes.route_observability import (
     route_after_vendor_ticket,
     style_guidance_review_node,
 )
+from app.nodes.sandbox_retrieval_shadow import sandbox_retrieve_pilot_shadow
 from app.nodes.vendor_ticket import vendor_ticket_node
+from app.nodes.vendor_ticket_ai_assist_shadow import vendor_ticket_ai_assist_shadow
 from app.schemas.workflow import ApprovalStatus, EntityType, WorkflowStatus, WorkflowType
 from app.state.commerce_state import CommerceAIState
 
@@ -36,6 +38,8 @@ def build_graph() -> CompiledStateGraph[CommerceAIState]:
 
     builder.add_node("normalize_request", normalize_request)
     builder.add_node("route_workflow", route_workflow)
+    builder.add_node("sandbox_retrieve_pilot_shadow", sandbox_retrieve_pilot_shadow)
+    builder.add_node("vendor_ticket_ai_assist_shadow", vendor_ticket_ai_assist_shadow)
     builder.add_node("retrieve_context", retrieve_context)
     builder.add_node("vendor_ticket_node", vendor_ticket_node)
     builder.add_node("qa_attention_review", qa_attention_review_node)
@@ -57,7 +61,9 @@ def build_graph() -> CompiledStateGraph[CommerceAIState]:
 
     builder.add_edge(START, "normalize_request")
     builder.add_edge("normalize_request", "route_workflow")
-    builder.add_edge("route_workflow", "retrieve_context")
+    builder.add_edge("route_workflow", "sandbox_retrieve_pilot_shadow")
+    builder.add_edge("sandbox_retrieve_pilot_shadow", "vendor_ticket_ai_assist_shadow")
+    builder.add_edge("vendor_ticket_ai_assist_shadow", "retrieve_context")
     builder.add_edge("retrieve_context", "vendor_ticket_node")
     builder.add_conditional_edges(
         "vendor_ticket_node",
