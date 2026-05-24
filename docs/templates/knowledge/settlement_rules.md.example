@@ -1,0 +1,21 @@
+---
+doc_id: settlement_rules_v1
+title: Settlement Rules (Template)
+document_type: settlement_rules
+visibility: private_internal
+source_lane: official_policy
+owner: operations
+language: fa
+version: 1
+last_reviewed_at: 2026-05-20
+---
+
+# Purpose
+
+This file is a **non-authoritative template**. Copy to
+`data/private/knowledge/operations/settlement_rules.md` and replace with
+**approved** internal wording. Do not invent or commit real financial rules here.
+
+## Placeholder section
+
+Approved operations content belongs in the private copy only.

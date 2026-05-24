@@ -21,9 +21,25 @@ _AI_ASSIST_STATE_KEYS = frozenset(
         "ai_assist_escalation_recommended",
         "ai_assist_duplicate_possible",
         "ai_assist_suggested_action",
+        "ai_assist_suggested_action_reason",
         "ai_assist_confidence_band",
         "ai_assist_human_review_required",
         "ai_assist_shadow_only",
+        "seller_notification_detected",
+        "seller_intent_type",
+        "seller_notification_type",
+        "seller_operational_request_type",
+        "extracted_order_id",
+        "extracted_order_ids",
+        "extracted_tracking_code",
+        "extracted_product_ids",
+        "extracted_tracking_carrier",
+        "entity_warnings_summary",
+        "seller_notification_shipment_status",
+        "detected_intent",
+        "intent_confidence_band",
+        "intent_reasons_summary",
+        "intent_related_document_types",
     }
 )
 
@@ -78,9 +94,25 @@ def apply_ai_assist_result_to_state(
     state["ai_assist_escalation_recommended"] = result.escalation_recommended
     state["ai_assist_duplicate_possible"] = result.duplicate_possible
     state["ai_assist_suggested_action"] = result.suggested_action.value
+    state["ai_assist_suggested_action_reason"] = result.suggested_action_reason
     state["ai_assist_confidence_band"] = result.confidence_band
     state["ai_assist_human_review_required"] = result.human_review_required
     state["ai_assist_shadow_only"] = result.assist_shadow_only
+    state["seller_notification_detected"] = result.seller_notification_detected
+    state["seller_intent_type"] = result.seller_intent_type
+    state["seller_notification_type"] = result.seller_notification_type
+    state["seller_operational_request_type"] = result.seller_operational_request_type
+    state["extracted_order_id"] = result.extracted_order_id
+    state["extracted_order_ids"] = result.extracted_order_ids
+    state["extracted_tracking_code"] = result.extracted_tracking_code
+    state["extracted_product_ids"] = result.extracted_product_ids
+    state["extracted_tracking_carrier"] = result.extracted_tracking_carrier
+    state["entity_warnings_summary"] = result.entity_warnings_summary
+    state["seller_notification_shipment_status"] = result.seller_notification_shipment_status
+    state["detected_intent"] = result.detected_intent
+    state["intent_confidence_band"] = result.intent_confidence_band
+    state["intent_reasons_summary"] = result.intent_reasons_summary
+    state["intent_related_document_types"] = result.intent_related_document_types
     sanitize_ai_assist_state_snapshot(state)
     return state
 

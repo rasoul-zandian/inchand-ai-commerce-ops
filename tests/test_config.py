@@ -23,6 +23,7 @@ def test_default_settings_load(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.embedding_model == "mock-embedding-small"
     assert settings.rag_strategy == "mock"
     assert settings.rag_top_k == 5
+    assert settings.show_full_iban_in_operator_console is True
 
 
 def test_rag_strategy_env_override(monkeypatch: pytest.MonkeyPatch) -> None:

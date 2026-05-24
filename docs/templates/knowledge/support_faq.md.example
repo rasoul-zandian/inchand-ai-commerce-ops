@@ -1,0 +1,19 @@
+---
+doc_id: support_faq_v1
+title: Support FAQ (Template)
+document_type: support_faq
+visibility: private_internal
+source_lane: official_policy
+owner: operations
+language: fa
+version: 1
+last_reviewed_at: 2026-05-20
+---
+
+# Purpose
+
+**Template only.** Copy to `data/private/knowledge/operations/support_faq.md`.
+
+## Placeholder section
+
+Curated FAQ entries belong in the private, reviewed document.

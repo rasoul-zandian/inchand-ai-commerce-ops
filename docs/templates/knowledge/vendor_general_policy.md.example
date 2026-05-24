@@ -1,0 +1,19 @@
+---
+doc_id: vendor_general_policy_v1
+title: Vendor General Policy (Template)
+document_type: vendor_general_policy
+visibility: private_internal
+source_lane: official_policy
+owner: operations
+language: fa
+version: 1
+last_reviewed_at: 2026-05-20
+---
+
+# Purpose
+
+**Template only.** Copy to `data/private/knowledge/operations/vendor_general_policy.md`.
+
+## Placeholder section
+
+Replace with approved vendor-facing policy text in the private copy.

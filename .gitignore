@@ -4,6 +4,15 @@ __pycache__/
 .pytest_cache/
 reports/
 data/private/
+# Explicit paths (reports/ and data/private/ already fully ignored):
+reports/operational_knowledge_inventory.json
+reports/operational_knowledge_inventory.md
+reports/knowledge_chunks_preview.jsonl
+reports/knowledge_chunks_summary.json
+reports/knowledge_chunks_summary.md
+reports/knowledge_pgvector_indexing_summary.json
+reports/knowledge_query_smoke.json
+data/private/knowledge/
 corpus/vendor_ticket_real_pilot/
 corpus/vendor_ticket_real_pilot_balanced/
 artifacts/embeddings/

@@ -1,0 +1,20 @@
+---
+doc_id: product_publishing_rules_v1
+title: Product Publishing Rules (Template)
+document_type: product_publishing_rules
+visibility: private_internal
+source_lane: official_policy
+owner: operations
+language: fa
+version: 1
+last_reviewed_at: 2026-05-20
+---
+
+# Purpose
+
+**Template only.** Copy to `data/private/knowledge/operations/product_publishing_rules.md`
+and replace with vetted catalog rules.
+
+## Placeholder section
+
+Replace with approved internal content in the private copy.

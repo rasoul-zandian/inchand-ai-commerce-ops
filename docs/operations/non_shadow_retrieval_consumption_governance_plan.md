@@ -93,7 +93,7 @@ All must be satisfied before any implementation of HITL-only retrieval display:
 | `retrieval_activated` | **false** on all rows until a separate activation decision |
 | `downstream_consumed_retrieval` | **false** until HITL path explicitly sets consumption audit fields |
 | Human reviewer sign-off | Named governance + HITL owner approval recorded (ticket/doc) |
-| Safe HITL output contract | UI shows only allowlisted aggregate fields; no raw query, hit bodies, vectors |
+| Safe HITL output contract | **Defined** (Step 150) — [HITL read-only visibility contract](hitl_read_only_visibility_contract.md) |
 | No raw sensitive content | No transcripts, message text, or embedding arrays in HITL payloads |
 | Rollback plan | Feature flag or config toggle documented to disable HITL retrieval panel without deploy rollback |
 | Production / customer-facing | **false** |
@@ -102,19 +102,11 @@ All must be satisfied before any implementation of HITL-only retrieval display:
 
 ### HITL-safe output contract (v1 allowlist)
 
-May display:
+**Authoritative contract:** [HITL read-only visibility contract](hitl_read_only_visibility_contract.md) (Step 150) — supersedes the informal list below for UI implementation.
 
-- `retrieval_gate_decision`, `retrieval_scenario`, `retrieval_policy_reasons`  
-- `retrieval_query_hash`, `retrieval_result_count`  
-- `retrieval_metadata_filter` (ticket_label, route_label only)  
-- `retrieval_sandbox_only`, `executor_called`  
-- Aggregate pilot scope labels (namespace/index version as text, not secrets)  
+May display (summary): aggregate `ai_assist_*`, `retrieval_gate_decision`, `retrieval_scenario`, `retrieval_result_count`, `retrieval_metadata_filter`, `retrieval_sandbox_only`, ticket routing labels; `retrieval_activated=false`.
 
-Must **not** display:
-
-- Raw query text, hit `content`, `record_id` lists at scale, scores distributions tied to identifiable text  
-- Vectors, embeddings, full `results` payloads  
-- Autonomous “recommended reply” based on retrieval  
+Must **not** display: raw messages, hit content, vectors, raw query, `draft_response`, `final_response`, customer reply suggestions.
 
 ---
 
@@ -181,8 +173,9 @@ This helper does **not** modify LangGraph, enable flags, or expose data.
 |-------|-----------|--------|
 | 1 | **Plan** | HITL visibility contract + UI mock (aggregate fields only) |
 | 2 | **Shadow assist (Steps 145–149)** | [Vendor ticket AI assist shadow workflow](vendor_ticket_ai_assist_shadow_workflow.md) + [AI assist shadow metrics report](ai_assist_shadow_metrics_report.md) — validated 166-ticket batch; **no** HITL UI yet |
-| 3 | **Implementation** | HITL panel behind flag; shadow path unchanged |
-| 4 | **Review** | Operator dry-run on pilot tickets; no draft linkage |
+| 3 | **Contract (Step 150)** | [HITL read-only visibility contract](hitl_read_only_visibility_contract.md) — field/action allowlists |
+| 4 | **Implementation** | HITL read-only panel behind flag; shadow path unchanged |
+| 5 | **Review** | Operator dry-run on pilot tickets; no draft linkage |
 | — | **Blocked** | Draft-assist (b), customer-facing (c) |
 
 ---
@@ -199,6 +192,7 @@ This helper does **not** modify LangGraph, enable flags, or expose data.
 ## Related documentation
 
 - [AI assist shadow metrics report](ai_assist_shadow_metrics_report.md) — Step 149 validated assist replay batch
+- [HITL read-only visibility contract](hitl_read_only_visibility_contract.md) — Step 150
 - [Vendor ticket AI assist shadow workflow](vendor_ticket_ai_assist_shadow_workflow.md) — Steps 145–148 shadow HITL assist (no consumption of hit content)
 - [Shadow replay metrics refresh report](shadow_replay_metrics_refresh_report.md) — Step 143 corrected metrics  
 - [LangGraph retrieval integration plan](langgraph_retrieval_integration_plan.md)  

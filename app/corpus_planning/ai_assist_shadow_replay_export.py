@@ -32,6 +32,13 @@ from app.corpus_planning.shadow_replay_jsonl_export import (
     resolve_shadow_export_route_label,
     run_routing_pipeline,
 )
+from app.hitl.hitl_payload_builder import extract_hitl_retrieval_fields_from_source
+from app.hitl.ticket_text_preview import attach_ticket_text_preview_to_row
+from app.live_feed.open_ticket_snapshot import (
+    attach_open_ticket_snapshot_to_row,
+    build_open_ticket_snapshot,
+    open_ticket_snapshot_to_payload,
+)
 from app.state.ai_assist_state import apply_ai_assist_result_to_state
 from app.state.commerce_state import CommerceAIState
 from app.tickets.conversation_models import (
@@ -86,6 +93,7 @@ def build_ai_assist_shadow_replay_export_row(
         "ai_assist_escalation_recommended": state.get("ai_assist_escalation_recommended"),
         "ai_assist_duplicate_possible": state.get("ai_assist_duplicate_possible"),
         "ai_assist_suggested_action": state.get("ai_assist_suggested_action"),
+        "ai_assist_suggested_action_reason": state.get("ai_assist_suggested_action_reason"),
         "ai_assist_confidence_band": state.get("ai_assist_confidence_band"),
         "ai_assist_human_review_required": (
             state.get("ai_assist_human_review_required")
@@ -97,10 +105,27 @@ def build_ai_assist_shadow_replay_export_row(
             if state.get("ai_assist_shadow_only") is not None
             else True
         ),
-        "retrieval_activated": False,
+        "seller_notification_detected": state.get("seller_notification_detected"),
+        "seller_intent_type": state.get("seller_intent_type"),
+        "seller_notification_type": state.get("seller_notification_type"),
+        "seller_operational_request_type": state.get("seller_operational_request_type"),
+        "extracted_order_id": state.get("extracted_order_id"),
+        "extracted_order_ids": state.get("extracted_order_ids"),
+        "extracted_tracking_code": state.get("extracted_tracking_code"),
+        "extracted_product_ids": state.get("extracted_product_ids"),
+        "extracted_tracking_carrier": state.get("extracted_tracking_carrier"),
+        "entity_warnings_summary": state.get("entity_warnings_summary"),
+        "seller_notification_shipment_status": state.get("seller_notification_shipment_status"),
+        "detected_intent": state.get("detected_intent"),
+        "intent_confidence_band": state.get("intent_confidence_band"),
+        "intent_reasons_summary": state.get("intent_reasons_summary"),
+        "intent_related_document_types": state.get("intent_related_document_types"),
         "downstream_consumed_retrieval": False,
         "errors": row_errors,
     }
+    row.update(extract_hitl_retrieval_fields_from_source(state))
+    row["retrieval_activated"] = False
+    row["downstream_consumed_retrieval"] = False
     assert_ai_assist_shadow_replay_row_safe(row)
     return row
 
@@ -178,6 +203,13 @@ def export_ai_assist_shadow_replay_row_for_snapshot(
 
     assist_executed = False
     if settings.vendor_ticket_ai_assist_shadow_enabled:
+        try:
+            open_snap = build_open_ticket_snapshot(snapshot)
+            for key, value in open_ticket_snapshot_to_payload(open_snap).items():
+                if key in ("latest_vendor_message", "original_vendor_issue_preview") and value:
+                    state[key] = value
+        except ValueError:
+            pass
         assist_errors = _run_ai_assist_on_state(state)
         row_errors.extend(assist_errors)
         assist_executed = True
@@ -186,12 +218,14 @@ def export_ai_assist_shadow_replay_row_for_snapshot(
             "ai_assist_shadow_skipped: VENDOR_TICKET_AI_ASSIST_SHADOW_ENABLED=false",
         )
 
-    return build_ai_assist_shadow_replay_export_row(
+    row = build_ai_assist_shadow_replay_export_row(
         snapshot,
         state,
         assist_executed=assist_executed,
         export_errors=row_errors,
     )
+    row = attach_ticket_text_preview_to_row(row, snapshot=snapshot)
+    return attach_open_ticket_snapshot_to_row(row, snapshot=snapshot)
 
 
 def export_ai_assist_shadow_replay_jsonl_content(

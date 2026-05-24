@@ -1,0 +1,19 @@
+---
+doc_id: prohibited_goods_v1
+title: Prohibited Goods (Template)
+document_type: prohibited_goods
+visibility: private_internal
+source_lane: official_policy
+owner: operations
+language: fa
+version: 1
+last_reviewed_at: 2026-05-20
+---
+
+# Purpose
+
+**Template only.** Copy to `data/private/knowledge/operations/prohibited_goods.md`.
+
+## Placeholder section
+
+Listings and enforcement details belong in the private, reviewed document.

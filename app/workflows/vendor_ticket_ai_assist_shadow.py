@@ -4,11 +4,21 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.workflows.seller_notification_detection import (
+    detect_seller_notification,
+    normalize_persian_arabic_digits,
+)
+from app.workflows.suggested_action_taxonomy import map_intent_to_suggested_action
 from app.workflows.vendor_ticket_ai_assist_models import (
     VendorTicketAIAssistActionType,
     VendorTicketAIAssistResult,
     VendorTicketAIAssistSeverity,
     VendorTicketAIAssistSuggestion,
+)
+from app.workflows.vendor_ticket_intent_detection import (
+    VendorTicketIntent,
+    detect_vendor_ticket_intent,
+    summarize_intent_reasons,
 )
 
 _FORBIDDEN_INPUT_KEYS = frozenset(
@@ -57,8 +67,12 @@ _ALLOWED_INPUT_KEYS = frozenset(
         "downstream_consumed_retrieval",
         "retrieval_error",
         "executor_called",
+        "latest_vendor_message",
+        "original_vendor_issue_preview",
     }
 )
+
+_PREVIEW_TEXT_MAX_CHARS = 400
 
 _PRIORITY_FROM_REVIEW = {
     "HIGH": "high",
@@ -110,6 +124,22 @@ def build_ai_assist_input_from_state(state: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def _sanitize_preview_text(value: Any, *, field_name: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name} must be a string when present")
+    text = value.strip()
+    if not text:
+        return None
+    if len(text) > _PREVIEW_TEXT_MAX_CHARS:
+        raise ValueError(f"{field_name} exceeds max length {_PREVIEW_TEXT_MAX_CHARS}")
+    lowered = text.lower()
+    if '"messages"' in lowered or "conversation transcript" in lowered:
+        raise ValueError(f"{field_name} must not reference full transcript")
+    return text
+
+
 def sanitize_ai_assist_input(payload: dict[str, Any]) -> dict[str, Any]:
     """Keep only allowlisted aggregate fields for shadow assist evaluation."""
     assert_ai_assist_input_safe(payload)
@@ -117,7 +147,21 @@ def sanitize_ai_assist_input(payload: dict[str, Any]) -> dict[str, Any]:
     for key in _ALLOWED_INPUT_KEYS:
         if key in payload:
             sanitized[key] = payload[key]
+    for preview_key in ("latest_vendor_message", "original_vendor_issue_preview"):
+        if preview_key in payload:
+            sanitized[preview_key] = _sanitize_preview_text(
+                payload[preview_key], field_name=preview_key
+            )
     return sanitized
+
+
+def _notification_source_text(sanitized: dict[str, Any]) -> str:
+    parts: list[str] = []
+    for key in ("latest_vendor_message", "original_vendor_issue_preview"):
+        value = sanitized.get(key)
+        if isinstance(value, str) and value.strip():
+            parts.append(value.strip())
+    return " ".join(parts)
 
 
 def _norm_label(value: Any) -> str | None:
@@ -125,6 +169,26 @@ def _norm_label(value: Any) -> str | None:
         return None
     text = str(value).strip().lower()
     return text or None
+
+
+def _suggested_action_for_intent(
+    intent: VendorTicketIntent,
+    *,
+    normalized_text: str = "",
+    conceptual_intent_fa: str | None = None,
+    entities: Any | None = None,
+    ticket_label: str | None = None,
+    route_label: str | None = None,
+) -> VendorTicketAIAssistActionType:
+    """Backward-compatible wrapper — prefer ``map_intent_to_suggested_action``."""
+    return map_intent_to_suggested_action(
+        intent,
+        conceptual_intent_fa=conceptual_intent_fa,
+        entities=entities,
+        normalized_text=normalized_text,
+        ticket_label=ticket_label,
+        route_label=route_label,
+    ).action
 
 
 def _review_priority_to_suggested(review_priority: Any) -> str:
@@ -244,6 +308,17 @@ def evaluate_vendor_ticket_ai_assist_shadow(
     ticket_label = _norm_label(sanitized.get("ticket_label"))
     route_label = _norm_label(sanitized.get("route_label"))
     review_priority = sanitized.get("review_priority")
+    source_text = _notification_source_text(sanitized)
+    intent_result = detect_vendor_ticket_intent(
+        source_text,
+        ticket_label=ticket_label,
+        route_label=route_label,
+    )
+    notification = detect_seller_notification(source_text)
+    intent = intent_result.intent
+    normalized_source = source_text
+    if normalized_source:
+        normalized_source = normalize_persian_arabic_digits(normalized_source)
 
     retrieval_available = _retrieval_summary_available(sanitized)
     result_count = sanitized.get("retrieval_result_count")
@@ -254,19 +329,45 @@ def evaluate_vendor_ticket_ai_assist_shadow(
         except (TypeError, ValueError):
             hit_count = 0
 
-    escalation_recommended = ticket_label == "complaint" or route_label == "escalation_review"
+    escalation_recommended = (
+        ticket_label == "complaint"
+        or route_label == "escalation_review"
+        or intent == VendorTicketIntent.COMPLAINT_ESCALATION
+    )
     duplicate_possible = retrieval_available and hit_count >= 3
 
-    if escalation_recommended:
-        suggested_action = VendorTicketAIAssistActionType.ESCALATE
-    elif ticket_label == "fund" or route_label == "billing_review":
-        suggested_action = VendorTicketAIAssistActionType.BILLING_REVIEW
-    elif ticket_label == "support" or route_label == "general_vendor_support":
-        suggested_action = VendorTicketAIAssistActionType.MONITOR
-    elif duplicate_possible:
-        suggested_action = VendorTicketAIAssistActionType.DUPLICATE_CHECK
+    seller_detected = notification.is_detected
+    human_review_required = True
+
+    action_mapping = map_intent_to_suggested_action(
+        intent,
+        normalized_text=normalized_source,
+        entities=intent_result,
+        ticket_label=ticket_label,
+        route_label=route_label,
+        seller_intent_type=notification.seller_intent,
+        seller_operational_request_type=notification.operational_request_type,
+    )
+    suggested_action = action_mapping.action
+
+    if seller_detected and notification.is_seller_operational_request:
+        escalation_recommended = escalation_recommended or notification.complaint_language_detected
+        suggested_priority = "medium"
+    elif seller_detected and notification.is_seller_notification:
+        escalation_recommended = escalation_recommended and notification.complaint_language_detected
+        suggested_priority = "low" if intent_result.confidence_band == "high" else "medium"
+    elif escalation_recommended:
+        suggested_priority = _review_priority_to_suggested(review_priority)
     else:
-        suggested_action = VendorTicketAIAssistActionType.MONITOR
+        suggested_priority = _review_priority_to_suggested(review_priority)
+
+    confidence_band = intent_result.confidence_band
+    if intent in (VendorTicketIntent.GENERAL_VENDOR_SUPPORT, VendorTicketIntent.UNKNOWN):
+        confidence_band = _confidence_band(
+            ticket_label=ticket_label,
+            route_label=route_label,
+            retrieval_available=retrieval_available,
+        )
 
     suggestions = _build_suggestions(
         ticket_label=ticket_label,
@@ -275,22 +376,79 @@ def evaluate_vendor_ticket_ai_assist_shadow(
         duplicate_possible=duplicate_possible,
         retrieval_available=retrieval_available,
     )
+    intent_summary = (
+        f"Detected operational intent: {intent.value} "
+        "(rule-based taxonomy v1; operator review only)."
+    )
+    suggestions.insert(
+        0,
+        VendorTicketAIAssistSuggestion(
+            action_type=suggested_action,
+            severity=VendorTicketAIAssistSeverity.LOW,
+            summary=intent_summary,
+            reason_codes=[f"intent:{intent.value}", *(intent_result.reasons[:4])],
+        ),
+    )
+    if seller_detected:
+        if notification.is_seller_operational_request:
+            reason_prefix = "seller_operational_request"
+        else:
+            reason_prefix = "seller_notification"
+        suggestions.insert(
+            1,
+            VendorTicketAIAssistSuggestion(
+                action_type=suggested_action,
+                severity=VendorTicketAIAssistSeverity.LOW,
+                summary="Step 169 seller message class also detected (compat fields preserved).",
+                reason_codes=[reason_prefix, *(notification.reasons[:3])],
+            ),
+        )
+    suggestions = suggestions[:6]
+
+    order_ids = intent_result.extracted_order_ids or list(notification.entities.order_ids)
+    order_ids_csv = ",".join(order_ids) if order_ids else None
+    primary_order = order_ids[0] if order_ids else notification.entities.order_id
+    tracking_code = intent_result.extracted_tracking_code or notification.entities.tracking_code
+    product_ids_csv = (
+        ",".join(intent_result.extracted_product_ids)
+        if intent_result.extracted_product_ids
+        else None
+    )
+    intent_docs_csv = (
+        ",".join(intent_result.related_document_types)
+        if intent_result.related_document_types
+        else None
+    )
 
     return VendorTicketAIAssistResult(
-        suggested_priority=_review_priority_to_suggested(review_priority),
+        suggested_priority=suggested_priority,
         escalation_recommended=escalation_recommended,
         duplicate_possible=duplicate_possible,
         suggested_action=suggested_action,
+        suggested_action_reason=action_mapping.reason,
         retrieval_summary_available=retrieval_available,
-        confidence_band=_confidence_band(
-            ticket_label=ticket_label,
-            route_label=route_label,
-            retrieval_available=retrieval_available,
-        ),
+        confidence_band=confidence_band,
         assist_generated_at=VendorTicketAIAssistResult.utc_timestamp(),
         suggestions=suggestions,
         assist_shadow_only=True,
-        human_review_required=True,
+        human_review_required=human_review_required,
         retrieval_activated=False,
         downstream_consumed_retrieval=False,
+        seller_notification_detected=notification.is_seller_notification,
+        seller_intent_type=notification.seller_intent,
+        seller_notification_type=notification.notification_type,
+        seller_operational_request_type=notification.operational_request_type,
+        extracted_order_id=primary_order,
+        extracted_order_ids=order_ids_csv,
+        extracted_tracking_code=tracking_code,
+        extracted_product_ids=product_ids_csv,
+        extracted_tracking_carrier=intent_result.extracted_tracking_carrier,
+        extracted_iban=intent_result.extracted_iban,
+        extracted_iban_masked=intent_result.extracted_iban_masked,
+        entity_warnings_summary=intent_result.entity_warnings_summary,
+        seller_notification_shipment_status=notification.entities.shipment_status,
+        detected_intent=intent.value,
+        intent_confidence_band=intent_result.confidence_band,
+        intent_reasons_summary=summarize_intent_reasons(intent_result.reasons),
+        intent_related_document_types=intent_docs_csv,
     )

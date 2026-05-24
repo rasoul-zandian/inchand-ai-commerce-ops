@@ -306,12 +306,14 @@ All must pass or be explicitly waived by governance **before** `LANGGRAPH_SANDBO
 10. **Policy gate synthetic calibration** — **Passed** (Step 139) — [calibration report](retrieval_policy_gate_calibration_report.md); no retrieval execution  
 11. **HITL / reviewer UI contract** — **Governance plan defined** (Step 144) — [non-shadow retrieval consumption governance plan](non_shadow_retrieval_consumption_governance_plan.md); HITL-only visibility is the **only** lane that may be considered next; implementation **not approved**  
 12. **Vendor ticket AI assist (shadow)** — **Evaluator + LangGraph node + metrics** (Steps 145–149) — [workflow](vendor_ticket_ai_assist_shadow_workflow.md), [metrics report](ai_assist_shadow_metrics_report.md); flag default **false**; **no** HITL UI, **no** customer send  
-13. **Production promotion plan** — separate from this document  
+13. **HITL read-only visibility** — **Contract defined** (Step 150) — [HITL read-only visibility contract](hitl_read_only_visibility_contract.md); UI **not** implemented  
+14. **Production promotion plan** — separate from this document  
 
 ---
 
 ## Related documentation
 
+- [HITL read-only visibility contract](hitl_read_only_visibility_contract.md) — Step 150
 - [AI assist shadow metrics report](ai_assist_shadow_metrics_report.md) — Step 149 validated assist replay batch
 - [Vendor ticket AI assist shadow workflow](vendor_ticket_ai_assist_shadow_workflow.md) — Steps 145–148 shadow HITL assist
 - [Non-shadow retrieval consumption governance plan](non_shadow_retrieval_consumption_governance_plan.md) — Step 144 HITL-only consumption gates (plan only)

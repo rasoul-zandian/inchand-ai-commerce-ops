@@ -931,6 +931,53 @@ def test_readme_links_dry_run_retrieval_chain_smoke_test_report() -> None:
     assert "dry_run_retrieval_chain_smoke_test_report.md" in readme
 
 
+def test_agentic_workflow_sandbox_plan_exists() -> None:
+    path = _REPO_ROOT / "docs/operations/agentic_workflow_sandbox_plan.md"
+    assert path.is_file()
+    text = path.read_text(encoding="utf-8")
+    lowered = text.lower()
+    assert "Agentic Workflow Sandbox Plan" in text
+    assert "human_review_required" in lowered
+    assert "execution_allowed" in lowered
+    assert "customer_send_allowed" in lowered
+    assert "non-goals" in lowered or "non goals" in lowered
+
+
+def test_agentic_workflow_sandbox_plan_blocks_production() -> None:
+    path = _REPO_ROOT / "docs/operations/agentic_workflow_sandbox_plan.md"
+    text = path.read_text(encoding="utf-8")
+    lowered = text.lower()
+    assert "rag_profile" in lowered or "production" in lowered
+    assert "auto-send" in lowered or "auto send" in lowered
+    assert "hitl" in lowered
+
+
+def test_readme_links_agentic_workflow_sandbox_plan() -> None:
+    readme = _README.read_text(encoding="utf-8")
+    assert "agentic_workflow_sandbox_plan.md" in readme
+    assert "agentic_sandbox" in readme
+
+
+def test_readme_documents_agentic_sandbox_graph_render() -> None:
+    readme = _README.read_text(encoding="utf-8")
+    assert "render_agentic_sandbox_graph.py" in readme
+    assert "agentic_sandbox_graph.md" in readme
+
+
+def test_readme_documents_agentic_sandbox_batch_report() -> None:
+    readme = _README.read_text(encoding="utf-8")
+    assert "run_agentic_sandbox_batch_report.py" in readme
+    assert "agentic_sandbox_batch_report.md" in readme
+    assert "first-vendor" in readme.lower() or "first vendor" in readme.lower()
+
+
+def test_readme_documents_agentic_sandbox_langsmith_tracing() -> None:
+    readme = _README.read_text(encoding="utf-8")
+    lowered = readme.lower()
+    assert "enable-langsmith" in lowered or "--enable-langsmith" in readme
+    assert "langsmith_tracing_enabled" in lowered or "langsmith_api_key" in lowered
+
+
 def test_langgraph_sandbox_retrieval_node_plan_exists() -> None:
     path = _REPO_ROOT / "docs/operations/langgraph_sandbox_retrieval_node_plan.md"
     assert path.is_file()
@@ -1161,6 +1208,100 @@ def test_readme_links_ai_assist_shadow_metrics_report() -> None:
     assert "error_count" in lowered or "error count" in lowered
 
 
+def test_hitl_read_only_visibility_contract_exists() -> None:
+    path = _REPO_ROOT / "docs/operations/hitl_read_only_visibility_contract.md"
+    assert path.is_file()
+    text = path.read_text(encoding="utf-8")
+    assert "HITL Read-Only Visibility Contract" in text
+    assert "Step 150" in text
+
+
+def test_hitl_read_only_visibility_contract_governance() -> None:
+    path = _REPO_ROOT / "docs/operations/hitl_read_only_visibility_contract.md"
+    text = path.read_text(encoding="utf-8")
+    lowered = text.lower()
+    assert "read-only" in lowered or "read only" in lowered
+    assert "auto-send" in lowered or "auto send" in lowered
+    assert "customer-facing" in lowered or "customer facing" in lowered
+    assert "draft" in lowered and "final" in lowered
+    assert "retrieved content" in lowered or "hit bodies" in lowered or "hit content" in lowered
+    assert "vector" in lowered
+    assert "raw query" in lowered or "retrieval_query_hash" in lowered
+    assert "retrieval_activated" in lowered
+    assert "downstream_consumed" in lowered
+    assert "vendor_ticket_node" in lowered
+    assert "ai_assist_shadow_only" in lowered
+    assert "ticket_text_preview" in lowered
+
+
+def test_readme_links_hitl_read_only_visibility_contract() -> None:
+    readme = _README.read_text(encoding="utf-8")
+    assert "hitl_read_only_visibility_contract.md" in readme
+    lowered = readme.lower()
+    assert "read-only" in lowered or "read only" in lowered
+    assert "hitl_payload_builder" in lowered
+    assert (
+        "hitl_visibility_contract" in lowered or "hitl_read_only_visibility_contract.md" in readme
+    )
+    assert "build_hitl_read_only_payload_sample.py" in readme
+
+
+def test_hitl_contract_links_payload_builder() -> None:
+    path = _REPO_ROOT / "docs/operations/hitl_read_only_visibility_contract.md"
+    text = path.read_text(encoding="utf-8")
+    assert "hitl_payload_builder.py" in text
+    assert "build_hitl_read_only_payload_sample.py" in text
+
+
+def test_hitl_contract_links_panel_preview() -> None:
+    path = _REPO_ROOT / "docs/operations/hitl_read_only_visibility_contract.md"
+    text = path.read_text(encoding="utf-8")
+    assert "render_hitl_read_only_panel_preview.py" in text
+    assert "hitl_read_only_panel_preview.md" in text
+    assert "hitl_read_only_preview_report.md" in text
+
+
+def test_readme_links_hitl_panel_preview() -> None:
+    readme = _README.read_text(encoding="utf-8")
+    assert "render_hitl_read_only_panel_preview.py" in readme
+    assert "hitl_read_only_panel_preview.md" in readme
+
+
+def test_hitl_read_only_preview_report_exists() -> None:
+    path = _REPO_ROOT / "docs/operations/hitl_read_only_preview_report.md"
+    assert path.is_file()
+    text = path.read_text(encoding="utf-8")
+    assert "HITL Read-Only Preview Batch Review Report" in text
+    assert "Step 153" in text
+
+
+def test_hitl_read_only_preview_report_governance() -> None:
+    path = _REPO_ROOT / "docs/operations/hitl_read_only_preview_report.md"
+    text = path.read_text(encoding="utf-8")
+    lowered = text.lower()
+    assert "payload_count" in lowered
+    assert "rendered_count" in lowered
+    assert "rejected_count" in lowered
+    assert "safety_check_passed" in lowered
+    assert "suggested_action_counts" in lowered or "suggested_action" in lowered
+    assert "priority_counts" in lowered or "priority" in lowered
+    assert "production" in lowered and "ui" in lowered
+    assert "fastapi" in lowered
+    assert "draft" in lowered and "final" in lowered
+    assert "read-only" in lowered or "read only" in lowered
+    assert "auto-send" in lowered or "auto send" in lowered
+    assert "safety footer" in lowered
+    assert "hitl_read_only_payload_sample.json" in text
+    assert "hitl_read_only_panel_preview.md" in text
+
+
+def test_readme_links_hitl_read_only_preview_report() -> None:
+    readme = _README.read_text(encoding="utf-8")
+    assert "hitl_read_only_preview_report.md" in readme
+    lowered = readme.lower()
+    assert "step 153" in lowered or "153" in readme
+
+
 def test_retrieval_policy_gate_calibration_report_exists() -> None:
     path = _REPO_ROOT / "docs/operations/retrieval_policy_gate_calibration_report.md"
     assert path.is_file()
@@ -1208,3 +1349,29 @@ def test_step_124_retrieval_decision_governance_across_docs() -> None:
         assert "not approved" in lowered or "blocked" in lowered or "not implied" in lowered, (
             path.name
         )
+
+
+def test_real_knowledge_embedding_smoke_report_exists() -> None:
+    path = _REPO_ROOT / "docs/operations/real_knowledge_embedding_smoke_report.md"
+    assert path.is_file()
+    text = path.read_text(encoding="utf-8")
+    lowered = text.lower()
+    assert "knowledge_v1_openai" in text
+    assert "text-embedding-3-small" in text
+    assert "retrieval_activated" in lowered
+    assert "sandbox" in lowered
+    assert "official_policy" in lowered
+
+
+def test_real_knowledge_embedding_smoke_report_blocks_draft_final() -> None:
+    path = _REPO_ROOT / "docs/operations/real_knowledge_embedding_smoke_report.md"
+    text = path.read_text(encoding="utf-8").lower()
+    assert "draft" in text and "final" in text
+    assert "not" in text
+    assert "operator console" in text or "operator-console" in text.replace("-", " ")
+
+
+def test_readme_links_real_knowledge_embedding_smoke_report() -> None:
+    readme = _README.read_text(encoding="utf-8")
+    assert "real_knowledge_embedding_smoke_report.md" in readme
+    assert "knowledge_v1_openai" in readme

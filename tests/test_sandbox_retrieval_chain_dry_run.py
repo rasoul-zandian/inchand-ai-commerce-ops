@@ -250,6 +250,7 @@ def test_cli_success_with_fake_chain(
         "scripts.dry_run_sandbox_retrieval_chain.run_sandbox_retrieval_chain_dry_run",
         fake_run,
     )
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key-for-ci")
     code = dry_run_main(
         [
             "--query",

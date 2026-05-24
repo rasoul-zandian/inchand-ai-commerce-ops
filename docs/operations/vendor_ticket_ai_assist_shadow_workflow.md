@@ -180,7 +180,8 @@ Row contract rejects forbidden keys, `retrieval_activated=true`, `downstream_con
 | **146** | LangGraph `vendor_ticket_ai_assist_shadow` node; flag default off |
 | **147–148** | Offline export + dashboard; sandbox `database_url` resolution for embedded retrieval chain |
 | **149** | [AI assist shadow metrics report](ai_assist_shadow_metrics_report.md) — validated 166-ticket batch |
-| **Future** | HITL UI panel per [non-shadow retrieval consumption governance plan](non_shadow_retrieval_consumption_governance_plan.md) |
+| **150** | [HITL read-only visibility contract](hitl_read_only_visibility_contract.md) — allowlists + reviewer boundaries (no UI) |
+| **Future** | HITL read-only panel implementation per contract |
 | **Blocked** | Draft-assist, customer-facing retrieval, production `RAG_PROFILE` |
 
 ---

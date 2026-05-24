@@ -158,7 +158,7 @@ Distribution aligns with pilot label mix (`support` / `complaint` / `fund`) and 
 | Customer-facing AI assist | **Blocked** |
 | Non-shadow retrieval consumption (general) | **Blocked** until Step 144 gates satisfied per lane |
 
-**Recommended next step:** Human governance review of this report, then **HITL read-only panel design** (aggregate `ai_assist_*` + retrieval metadata only) behind new flags — still no draft/final linkage or customer send.
+**Recommended next step:** Human qualitative review of [HITL read-only preview batch report](hitl_read_only_preview_report.md) (Step 153) and [HITL read-only visibility contract](hitl_read_only_visibility_contract.md) (Steps 150–152). Optional future **production HITL UI** behind new flags — local mock preview via `scripts/render_hitl_read_only_panel_preview.py`; still no draft/final linkage or customer send.
 
 ---
 
@@ -173,6 +173,8 @@ Distribution aligns with pilot label mix (`support` / `complaint` / `fund`) and 
 
 ## Related documentation
 
+- [HITL read-only visibility contract](hitl_read_only_visibility_contract.md) — Steps 150–152 (contract + payload + mock preview)  
+- [HITL read-only preview batch report](hitl_read_only_preview_report.md) — Step 153
 - [Vendor ticket AI assist shadow workflow](vendor_ticket_ai_assist_shadow_workflow.md) — Steps 145–148  
 - [Shadow replay metrics refresh report](shadow_replay_metrics_refresh_report.md) — retrieval shadow batch (Step 143)  
 - [Non-shadow retrieval consumption governance plan](non_shadow_retrieval_consumption_governance_plan.md) — Step 144  

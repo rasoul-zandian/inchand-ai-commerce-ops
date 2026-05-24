@@ -21,8 +21,18 @@ class AppSettings(BaseSettings):
     app_name: str = "Inchand AI Commerce Operations Copilot"
     environment: str = "development"
     langsmith_tracing: bool = False
+    langsmith_tracing_enabled: bool = Field(
+        default=False,
+        description=(
+            "When true, agentic sandbox CLI may enable LangSmith tracing "
+            "(LANGCHAIN_TRACING_V2). Default false; requires API key at runtime."
+        ),
+    )
     langsmith_api_key: str | None = None
-    langsmith_project: str = "inchand-ai-commerce-mvp"
+    langsmith_project: str = Field(
+        default="inchand-agentic-sandbox",
+        description="LangSmith / LANGCHAIN_PROJECT name for sandbox and local tracing.",
+    )
     llm_provider: str = "mock"
     llm_model: str = "mock-vendor-ticket-drafter"
     openai_api_key: str | None = None
@@ -92,6 +102,216 @@ class AppSettings(BaseSettings):
             "When true, run vendor_ticket_ai_assist_shadow after sandbox retrieval "
             "(HITL-only assist metadata; does not change draft/final responses). Default false."
         ),
+    )
+    live_feed_enabled: bool = Field(
+        default=False,
+        description=(
+            "When true, operator console may use live JSONL feed polling "
+            "(read-only; no production writes). Default false."
+        ),
+    )
+    live_feed_poll_interval_seconds: int = Field(
+        default=30,
+        ge=5,
+        description="Streamlit live mode auto-refresh interval in seconds.",
+    )
+    live_feed_max_batch: int = Field(
+        default=20,
+        ge=1,
+        le=200,
+        description="Maximum live tickets processed per poll/refresh.",
+    )
+    live_feed_source_path: str = Field(
+        default="data/private/live_vendor_tickets.jsonl",
+        description="UTF-8 JSONL path for incoming vendor tickets (append-only local feed).",
+    )
+    live_feed_checkpoint_path: str = Field(
+        default="reports/live_feed_checkpoint.json",
+        description="Local JSON checkpoint for incremental live feed polling.",
+    )
+    allow_raw_pii_internal_pilot: bool = Field(
+        default=True,
+        description=(
+            "When true (default), live feed contract validation allows raw phone/IBAN/email/card "
+            "identifiers in internal-only pilot feeds for extraction evaluation. "
+            "Set false for strict redaction enforcement in future production feeds."
+        ),
+    )
+    knowledge_hints_enabled: bool = Field(
+        default=False,
+        description=(
+            "When true, operator console may fetch read-only official policy hints "
+            "via sandbox knowledge retrieval (no draft/final use). Default false."
+        ),
+    )
+    knowledge_retrieval_namespace: str = Field(
+        default="knowledge_operations_sandbox",
+        description="Sandbox namespace for operator knowledge hints only.",
+    )
+    knowledge_retrieval_index_version: str = Field(
+        default="knowledge_v1_openai",
+        description="Sandbox knowledge index version (must start with knowledge_v).",
+    )
+    knowledge_hints_top_k: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description="Max official policy hints shown per ticket in operator console.",
+    )
+    operator_first_vendor_only: bool = Field(
+        default=True,
+        description=(
+            "When true, operator console lists only rooms where the first non-internal "
+            "message is from seller/vendor (first-turn seller-initiated calibration)."
+        ),
+    )
+    operator_draft_preview_enabled: bool = Field(
+        default=False,
+        description=(
+            "When true, operator console may load offline draft suggestions JSONL "
+            "for internal preview (not sent to customers)."
+        ),
+    )
+    operator_draft_generation_enabled: bool = Field(
+        default=False,
+        description=(
+            "When true, operator console may regenerate drafts via OpenAI into "
+            "Streamlit session_state only (no DB/JSONL persistence)."
+        ),
+    )
+    operator_agentic_sandbox_preview_enabled: bool = Field(
+        default=False,
+        description=(
+            "When true, operator console may run the agentic sandbox LangGraph preview "
+            "per ticket (session-only; no execution/send)."
+        ),
+    )
+    operator_agentic_sandbox_provider: str = Field(
+        default="mock",
+        description="LLM provider for operator-console agentic sandbox preview (mock or openai).",
+    )
+    operator_agentic_sandbox_knowledge_hints_enabled: bool = Field(
+        default=True,
+        description=(
+            "When true, agentic sandbox preview runs with sandbox knowledge hints enabled "
+            "(metadata only in UI; no raw snippets)."
+        ),
+    )
+    operator_agentic_assisted_mode_enabled: bool = Field(
+        default=False,
+        description=(
+            "When true, operator console may run operator-assisted agentic mode "
+            "(structured HITL review package; session-only; no execution/send)."
+        ),
+    )
+    operator_agentic_assisted_provider: str = Field(
+        default="mock",
+        description="LLM provider for operator-assisted agentic mode (mock or openai).",
+    )
+    operator_agentic_assisted_knowledge_hints_enabled: bool = Field(
+        default=True,
+        description=(
+            "When true, operator-assisted agentic mode runs with knowledge hints enabled "
+            "(metadata only in UI; no raw snippets)."
+        ),
+    )
+    operator_agentic_assisted_require_graduation_ready: bool = Field(
+        default=True,
+        description=(
+            "When true, operator-assisted agentic mode requires graduation summary "
+            "overall_status=ready_for_operator_assisted_phase before running."
+        ),
+    )
+    operator_draft_suggestions_path: str = Field(
+        default="reports/offline_draft_suggestions_first_turn_v1.jsonl",
+        description="Offline draft suggestions JSONL for operator console preview.",
+    )
+    operator_draft_model: str = Field(
+        default="gpt-4o-mini",
+        description="OpenAI model for operator-console session draft regeneration.",
+    )
+    operator_draft_max_chars: int = Field(
+        default=700,
+        ge=100,
+        le=1200,
+        description="Max characters for operator-console regenerated drafts.",
+    )
+    openai_draft_model: str = Field(
+        default="gpt-4o-mini",
+        description="OpenAI model for agentic sandbox / assisted draft generation pilot.",
+    )
+    openai_draft_temperature: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        description="Sampling temperature for OpenAI draft generation (pilot).",
+    )
+    openai_draft_max_tokens: int = Field(
+        default=256,
+        ge=64,
+        le=1024,
+        description="Max completion tokens for OpenAI draft generation (pilot).",
+    )
+    show_gold_reply_in_console: bool = Field(
+        default=False,
+        description=(
+            "When true, allow showing gold human replies in console (evaluation only). "
+            "Default false."
+        ),
+    )
+    show_full_iban_in_operator_console: bool = Field(
+        default=True,
+        description=(
+            "When true, operator console shows full normalized Sheba/IBAN for internal "
+            "calibration review. Set false to mask in UI (future production/HITL rollout)."
+        ),
+    )
+    draft_generation_mode: str = Field(
+        default="first_turn_only",
+        description=(
+            "Draft prompt isolation mode: first_turn_only (default; initial seller issue only) "
+            "or live_thread_context (deferred; not used in production paths yet)."
+        ),
+    )
+    draft_style: str = Field(
+        default="operational_short",
+        description="Draft reply style preset (operational_short: 1–2 short sentences).",
+    )
+    draft_max_sentences: int = Field(
+        default=2,
+        ge=1,
+        le=4,
+        description="Max sentences for operational_short draft validation.",
+    )
+    draft_target_max_chars: int = Field(
+        default=180,
+        ge=80,
+        le=400,
+        description="Target max characters for operational_short drafts.",
+    )
+    draft_hard_max_chars: int = Field(
+        default=300,
+        ge=120,
+        le=600,
+        description="Hard max characters for operational_short drafts.",
+    )
+    policy_draft_max_sentences: int = Field(
+        default=4,
+        ge=2,
+        le=6,
+        description="Max sentences for policy_explanation draft validation.",
+    )
+    policy_draft_target_max_chars: int = Field(
+        default=600,
+        ge=300,
+        le=900,
+        description="Target max characters for policy_explanation drafts.",
+    )
+    policy_draft_hard_max_chars: int = Field(
+        default=700,
+        ge=400,
+        le=1000,
+        description="Hard max characters for policy_explanation drafts.",
     )
 
     @field_validator("review_action_adapter", mode="before")

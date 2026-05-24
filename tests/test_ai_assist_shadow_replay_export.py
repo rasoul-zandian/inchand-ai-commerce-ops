@@ -123,6 +123,33 @@ def _fake_chain_runner(
     )
 
 
+def test_export_row_includes_ticket_text_preview(monkeypatch: pytest.MonkeyPatch) -> None:
+    _enable_flags(monkeypatch, retrieval=False, assist=True)
+    rows, _summary = export_ai_assist_shadow_replay_jsonl_content(
+        [_valid_line()],
+        _export_config(),
+    )
+    row = rows[0]
+    preview = row.get("ticket_text_preview")
+    assert isinstance(preview, str)
+    assert preview
+    assert len(preview) <= 400
+    assert "messages" not in row
+
+
+def test_export_row_includes_retrieval_when_shadow_runs(monkeypatch: pytest.MonkeyPatch) -> None:
+    _enable_flags(monkeypatch, retrieval=True, assist=True)
+    rows, _summary = export_ai_assist_shadow_replay_jsonl_content(
+        [_valid_line()],
+        _export_config(),
+        run_chain=_fake_chain_runner,
+    )
+    row = rows[0]
+    assert row["retrieval_gate_decision"] == "allow"
+    assert row["retrieval_result_count"] == 1
+    assert "retrieval_query_hash" not in row
+
+
 def test_export_row_safe_with_assist_flag_true(monkeypatch: pytest.MonkeyPatch) -> None:
     _enable_flags(monkeypatch, retrieval=False, assist=True)
     rows, summary = export_ai_assist_shadow_replay_jsonl_content(
@@ -138,6 +165,10 @@ def test_export_row_safe_with_assist_flag_true(monkeypatch: pytest.MonkeyPatch) 
     assert row["retrieval_activated"] is False
     assert row["downstream_consumed_retrieval"] is False
     assert row["ai_assist_shadow_only"] is True
+    assert row["detected_intent"] == "settlement_status_inquiry"
+    assert row["intent_confidence_band"] in ("low", "medium", "high")
+    assert row["intent_reasons_summary"]
+    assert row["intent_related_document_types"]
     assert_ai_assist_shadow_replay_row_safe(row)
     assert "messages" not in row
     assert "draft_response" not in row

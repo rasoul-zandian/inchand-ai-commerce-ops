@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 from app.corpus_planning.pilot_retrieval_eval import (
+    assert_eval_profile,
     assert_safe_eval_report,
     build_default_pilot_retrieve_fn,
     build_pilot_pgvector_store,
@@ -137,6 +138,7 @@ def main(argv: list[str] | None = None) -> int:
     dimensions = int(os.environ.get("PGVECTOR_DIMENSIONS", "1536"))
 
     try:
+        assert_eval_profile(args.profile)
         cases = load_pilot_retrieval_cases(args.cases)
         store = build_pilot_pgvector_store(
             database_url,
