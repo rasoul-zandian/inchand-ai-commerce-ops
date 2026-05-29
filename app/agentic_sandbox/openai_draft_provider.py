@@ -7,6 +7,10 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from app.agentic_sandbox.final_draft_reflection import (
+    apply_final_draft_reflection_review,
+    reflection_metadata_row,
+)
 from app.agentic_sandbox.mock_draft_templates import (
     MockOperationalDraftInput,
     generate_mock_operational_draft,
@@ -28,6 +32,10 @@ from app.evals.draft_evidence_wording_calibration import (
     calibrate_photo_evidence_wording,
 )
 from app.evals.draft_policy_grounding_calibration import apply_policy_grounding_calibration
+from app.evals.draft_product_wording_calibration import (
+    apply_product_wording_calibration,
+    build_product_wording_prompt_instruction,
+)
 from app.evals.draft_style import (
     DRAFT_STYLE_POLICY_EXPLANATION,
     apply_draft_style_checks,
@@ -44,14 +52,18 @@ from app.knowledge.policy_fact_extraction import (
     has_incomplete_iban_signal,
     has_valid_extracted_iban,
     is_settlement_account_operational_request,
+    is_settlement_bank_policy_question,
 )
 from app.llm.types import LLMMessage
 from app.workflows.operational_information_sufficiency import (
+    apply_panel_issue_draft_calibration,
     build_operational_policy_prompt_hints,
     detect_operational_scenario,
     evaluate_operational_sufficiency,
+    is_seller_panel_issue,
     minimum_required_operational_entities,
     resolve_operational_order_ids,
+    shop_id_available,
 )
 from app.workflows.seller_notification_detection import (
     SellerIntentType,
@@ -114,6 +126,8 @@ class OpenAIDraftPromptContext:
     extracted_iban: str | None = None
     has_incomplete_iban_entity: bool = False
     entity_warnings_summary: str | None = None
+    shop_id_available: bool = False
+    panel_issue_detected: bool = False
 
 
 @dataclass(frozen=True)
@@ -223,6 +237,13 @@ def build_openai_draft_prompt(context: OpenAIDraftPromptContext) -> list[LLMMess
         suggested_action=context.suggested_action,
         missing_entities=context.actionability.missing_required_entities,
     )
+    product_wording_instruction = build_product_wording_prompt_instruction(
+        seller_text=context.seller_text,
+        detected_intent=context.detected_intent,
+        conceptual_intent_fa=context.conceptual_intent_fa,
+        suggested_action=context.suggested_action,
+        draft_style=context.draft_style,
+    )
     draft_length_hint = (
         "یک پیش‌نویس پاسخ فارسی شفاف بنویس."
         if context.draft_style == DRAFT_STYLE_POLICY_EXPLANATION
@@ -230,7 +251,18 @@ def build_openai_draft_prompt(context: OpenAIDraftPromptContext) -> list[LLMMess
     )
     policy_facts_block = ""
     settlement_account_block = ""
-    if is_settlement_account_operational_request(
+    if is_settlement_bank_policy_question(
+        context.seller_text,
+        detected_intent=context.detected_intent,
+        conceptual_intent_fa=context.conceptual_intent_fa,
+        suggested_action=context.suggested_action,
+    ):
+        settlement_account_block = (
+            "این سوال درباره قانون بانک قابل قبول برای تسویه است؛ از فروشنده شماره شبا نخواه.\n"
+            "اگر فروشنده می‌پرسد شبا/حساب برای تسویه باید مربوط به کدام بانک باشد، "
+            "پاسخ قانونی بده و درخواست ارسال شبا نکن.\n\n"
+        )
+    elif is_settlement_account_operational_request(
         context.seller_text,
         detected_intent=context.detected_intent,
         conceptual_intent_fa=context.conceptual_intent_fa,
@@ -256,6 +288,17 @@ def build_openai_draft_prompt(context: OpenAIDraftPromptContext) -> list[LLMMess
             settlement_account_block += (
                 "شماره شبای معتبر استخراج نشده است؛ فقط شماره شبای صحیح را بخواه.\n\n"
             )
+    panel_issue_block = ""
+    if context.panel_issue_detected:
+        panel_issue_block = (
+            "مشکل دسترسی/وضعیت پنل یا فروشگاه شناسایی شده است.\n"
+            f"shop_id_available={'true' if context.shop_id_available else 'false'}\n"
+            "برای مشکل پنل/دسترسی فروشگاه، شناسه پنل/فروشگاه/shop_id را از فروشنده "
+            "نخواه — سیستم shop_id را دارد.\n"
+            "علت بسته شدن پنل را حدس نزن و وعده فعال‌سازی مجدد نده.\n"
+            "اگر علت بسته‌شدن در تاریخچه نیست، بگو پنل توسط ناظر بررسی می‌شود.\n\n"
+        )
+
     elif context.draft_style == DRAFT_STYLE_POLICY_EXPLANATION and context.policy_facts_prompt:
         policy_facts_block = (
             "حقایق رسمی سیاست (مستقیم استفاده کن؛ زمان‌بندی دیگری اختراع نکن؛ "
@@ -280,6 +323,7 @@ def build_openai_draft_prompt(context: OpenAIDraftPromptContext) -> list[LLMMess
         "- اگر فقط سلام/احوال‌پرسی است، محترمانه جزئیات درخواست را بخواه.\n"
         f"- {style_note}\n"
         f"{photo_instruction}\n"
+        f"{product_wording_instruction}"
         "- chain-of-thought یا توضیح داخلی ننویس.\n"
         'خروجی فقط JSON: {"draft_reply": "..."}'
     )
@@ -297,6 +341,7 @@ def build_openai_draft_prompt(context: OpenAIDraftPromptContext) -> list[LLMMess
         f"راهنمای عملیاتی: {actionability_note}\n"
         f"راهنمای سناریو: {scenario_note}\n"
         f"{operational_block}"
+        f"{panel_issue_block}"
         f"{settlement_account_block}"
         f"{policy_facts_block}"
         f"{draft_length_hint}"
@@ -736,6 +781,7 @@ def build_openai_prompt_context_from_graph(
         if isinstance(item, dict) and item.get("document_type"):
             hint_types.append(str(item["document_type"]))
 
+    ticket_shop_id = state.get("shop_id")
     policy_hints = build_operational_policy_prompt_hints(
         seller_text=ctx.first_turn_text,
         detected_intent=detected,
@@ -747,6 +793,15 @@ def build_openai_prompt_context_from_graph(
         extracted_iban=extracted_iban,
         has_incomplete_iban_entity=has_incomplete_iban_entity,
         entity_warnings_summary=entity_warnings_summary,
+        shop_id=ticket_shop_id,
+    )
+    panel_detected = is_seller_panel_issue(
+        ctx.first_turn_text,
+        detected_intent=detected,
+        suggested_action=suggested,
+        conceptual_intent_fa=conceptual,
+        order_ids=order_ids,
+        product_ids=product_ids,
     )
     validation = _override_actionability_for_operational_sufficiency(
         validation,
@@ -797,6 +852,8 @@ def build_openai_prompt_context_from_graph(
         extracted_iban=extracted_iban,
         has_incomplete_iban_entity=has_incomplete_iban_entity,
         entity_warnings_summary=entity_warnings_summary,
+        shop_id_available=shop_id_available(shop_id=ticket_shop_id),
+        panel_issue_detected=panel_detected,
     )
 
 
@@ -867,6 +924,51 @@ def generate_openai_draft_for_sandbox_state(
         entity_warnings_summary=prompt_ctx.entity_warnings_summary,
     )
     draft_text = grounding.draft_reply
+    draft_text, _panel_metrics = apply_panel_issue_draft_calibration(
+        draft_text,
+        seller_text=ctx.first_turn_text,
+        detected_intent=ctx.first_turn_intent.detected_intent,
+        suggested_action=ctx.suggested_action,
+        conceptual_intent_fa=prompt_ctx.conceptual_intent_fa,
+        order_ids=prompt_ctx.order_ids,
+        product_ids=prompt_ctx.product_ids,
+        shop_id=state.get("shop_id"),
+    )
+    draft_text, _product_wording = apply_product_wording_calibration(
+        draft_text,
+        seller_text=ctx.first_turn_text,
+        detected_intent=ctx.first_turn_intent.detected_intent,
+        suggested_action=ctx.suggested_action,
+        conceptual_intent_fa=prompt_ctx.conceptual_intent_fa,
+        draft_style=effective_style,
+        product_ids=prompt_ctx.product_ids,
+    )
+    draft_text, reflection_result = apply_final_draft_reflection_review(
+        draft_text,
+        seller_text=ctx.first_turn_text,
+        detected_intent=ctx.first_turn_intent.detected_intent,
+        suggested_action=ctx.suggested_action,
+        conceptual_intent_fa=prompt_ctx.conceptual_intent_fa,
+        draft_style=effective_style,
+        order_ids=prompt_ctx.order_ids,
+        product_ids=prompt_ctx.product_ids,
+        tracking_code=prompt_ctx.tracking_code,
+        extracted_iban=prompt_ctx.extracted_iban,
+        has_incomplete_iban_entity=prompt_ctx.has_incomplete_iban_entity,
+        entity_warnings_summary=prompt_ctx.entity_warnings_summary,
+        shop_id=state.get("shop_id"),
+        policy_hints=tuple(prompt_hints),
+        draft_provider=generation.draft_provider,
+        runtime_shop_identity_available=bool(
+            state.get("shop_identity_available")
+            or state.get("shop_id")
+            or state.get("seller_id")
+            or state.get("shop_name")
+        ),
+        runtime_shop_id_present=bool(state.get("shop_id")),
+        settings=cfg,
+    )
+    _ = reflection_metadata_row(reflection_result)
     apply_draft_style_checks(
         draft_text,
         cfg,

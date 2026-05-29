@@ -1,0 +1,14 @@
+{
+  "scenario_id": "settlement_operational_not_timing",
+  "draft_fingerprint": "63bda9a145844053a424b199820508c0b55dcc0ff7a97ce245f3df350ec2a10c",
+  "detected_intent": "settlement_status_inquiry",
+  "suggested_action": "billing_review",
+  "reflection_rewrite_applied": false,
+  "should_generate_draft": null,
+  "policy_question_type": "none",
+  "reflection_issue_types": [],
+  "graph_status": "ok",
+  "eval_passed": true,
+  "skip_reason": null,
+  "updated_at_utc": "2026-05-26T14:04:21+00:00"
+}

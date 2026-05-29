@@ -12,6 +12,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from app.agentic_sandbox.final_draft_reflection import (
+    apply_final_draft_reflection_review,
+    reflection_metadata_row,
+)
 from app.config import AppSettings, get_settings
 from app.evals.actionability_validation import (
     actionability_metadata_row,
@@ -35,6 +39,10 @@ from app.evals.draft_generation_mode import (
     parse_draft_generation_mode,
 )
 from app.evals.draft_policy_grounding_calibration import apply_policy_grounding_calibration
+from app.evals.draft_product_wording_calibration import (
+    apply_product_wording_calibration,
+    product_wording_metadata_row,
+)
 from app.evals.draft_prompt_leakage import (
     assert_prompt_messages_safe,
     build_prompt_audit_record,
@@ -699,6 +707,31 @@ def process_benchmark_case(
             hints=hints,
         )
         calibrated_draft = grounding.draft_reply
+        calibrated_draft, product_wording = apply_product_wording_calibration(
+            calibrated_draft,
+            seller_text=seller_for_calibration or "",
+            detected_intent=intent.value,
+            suggested_action=suggested_action,
+            draft_style=effective_style,
+            product_ids=tuple(getattr(intent_result, "extracted_product_ids", None) or ()),
+        )
+        calibrated_draft, reflection_result = apply_final_draft_reflection_review(
+            calibrated_draft,
+            seller_text=seller_for_calibration or "",
+            detected_intent=intent.value,
+            suggested_action=suggested_action,
+            draft_style=effective_style,
+            order_ids=tuple(getattr(intent_result, "extracted_order_ids", None) or ()),
+            product_ids=tuple(getattr(intent_result, "extracted_product_ids", None) or ()),
+            tracking_code=getattr(intent_result, "extracted_tracking_code", None),
+            extracted_iban=getattr(intent_result, "extracted_iban", None),
+            entity_warnings_summary=getattr(intent_result, "entity_warnings_summary", None),
+            policy_hints=tuple(hints),
+            draft_provider=provider,
+            runtime_shop_identity_available=False,
+            runtime_shop_id_present=False,
+            settings=settings,
+        )
         assert_draft_reply_safe(calibrated_draft, max_chars=draft_max)
         style_validation = apply_draft_style_checks(
             calibrated_draft,
@@ -713,6 +746,8 @@ def process_benchmark_case(
         base_row["knowledge_hint_document_types"] = [hint.document_type for hint in hints]
         base_row.update(draft_style_metadata_row(style_validation))
         base_row.update(completion_calibration_metadata_row(completion))
+        base_row.update(product_wording_metadata_row(product_wording))
+        base_row.update(reflection_metadata_row(reflection_result))
         base_row["draft_generated"] = True
         if hint_error:
             base_row["error_reason"] = hint_error

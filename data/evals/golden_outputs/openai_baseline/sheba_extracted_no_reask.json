@@ -1,0 +1,18 @@
+{
+  "scenario_id": "sheba_extracted_no_reask",
+  "draft_fingerprint": "28ae99d87f4c39bd40ad50441e3126c12071a0d3dd54501b2f2e4fdb96692f18",
+  "detected_intent": "settlement_status_inquiry",
+  "suggested_action": "billing_review",
+  "reflection_rewrite_applied": false,
+  "should_generate_draft": true,
+  "policy_question_type": "none",
+  "reflection_issue_types": [
+    "repeated_identifier_request",
+    "repeated_identifier_request",
+    "missing_operational_ack"
+  ],
+  "graph_status": "ok",
+  "eval_passed": true,
+  "skip_reason": null,
+  "updated_at_utc": "2026-05-26T14:04:21+00:00"
+}

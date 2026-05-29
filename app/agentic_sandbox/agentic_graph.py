@@ -14,11 +14,17 @@ from langgraph.graph.state import CompiledStateGraph
 from app.agentic_sandbox.agentic_nodes import (
     build_first_turn_context_node,
     detect_intent_node,
+    execute_iran_post_tracking_node,
+    execute_order_lookup_node,
     extract_entities_node,
     generate_draft_node,
+    grounded_reply_node,
     human_review_handoff_node,
+    plan_read_only_tools_node,
     retrieve_knowledge_hints_node,
     safety_gate_node,
+    shipment_delivery_decision_after_tracking_node,
+    shipment_delivery_decision_node,
     suggest_action_node,
     validate_actionability_node,
 )
@@ -38,7 +44,13 @@ NODE_ORDER = (
     "retrieve_knowledge_hints",
     "suggest_action",
     "validate_actionability",
+    "plan_read_only_tools",
+    "execute_order_lookup",
+    "shipment_delivery_decision",
+    "execute_iran_post_tracking",
+    "shipment_delivery_decision_after_tracking",
     "generate_draft",
+    "grounded_reply",
     "safety_gate",
     "human_review_handoff",
 )
@@ -82,7 +94,7 @@ def build_agentic_sandbox_graph(
     *,
     settings: AppSettings | None = None,
 ) -> CompiledStateGraph[AgenticSandboxState]:
-    """Compile linear sandbox graph (no conditional tool execution)."""
+    """Compile sandbox graph with gated read-only tool nodes."""
     cfg = settings or get_settings()
 
     def _retrieve(state: AgenticSandboxState) -> dict[str, Any]:
@@ -91,6 +103,15 @@ def build_agentic_sandbox_graph(
     def _generate(state: AgenticSandboxState) -> dict[str, Any]:
         return generate_draft_node(state, settings=cfg)
 
+    def _plan_tools(state: AgenticSandboxState) -> dict[str, Any]:
+        return plan_read_only_tools_node(state, settings=cfg)
+
+    def _order_lookup(state: AgenticSandboxState) -> dict[str, Any]:
+        return execute_order_lookup_node(state, settings=cfg)
+
+    def _iran_post(state: AgenticSandboxState) -> dict[str, Any]:
+        return execute_iran_post_tracking_node(state, settings=cfg)
+
     builder = StateGraph(AgenticSandboxState)
     builder.add_node("build_first_turn_context", build_first_turn_context_node)
     builder.add_node("detect_intent", detect_intent_node)
@@ -98,7 +119,16 @@ def build_agentic_sandbox_graph(
     builder.add_node("retrieve_knowledge_hints", _retrieve)
     builder.add_node("suggest_action", suggest_action_node)
     builder.add_node("validate_actionability", validate_actionability_node)
+    builder.add_node("plan_read_only_tools", _plan_tools)
+    builder.add_node("execute_order_lookup", _order_lookup)
+    builder.add_node("shipment_delivery_decision", shipment_delivery_decision_node)
+    builder.add_node("execute_iran_post_tracking", _iran_post)
+    builder.add_node(
+        "shipment_delivery_decision_after_tracking",
+        shipment_delivery_decision_after_tracking_node,
+    )
     builder.add_node("generate_draft", _generate)
+    builder.add_node("grounded_reply", grounded_reply_node)
     builder.add_node("safety_gate", safety_gate_node)
     builder.add_node("human_review_handoff", human_review_handoff_node)
 
@@ -108,8 +138,14 @@ def build_agentic_sandbox_graph(
     builder.add_edge("extract_entities", "retrieve_knowledge_hints")
     builder.add_edge("retrieve_knowledge_hints", "suggest_action")
     builder.add_edge("suggest_action", "validate_actionability")
-    builder.add_edge("validate_actionability", "generate_draft")
-    builder.add_edge("generate_draft", "safety_gate")
+    builder.add_edge("validate_actionability", "plan_read_only_tools")
+    builder.add_edge("plan_read_only_tools", "execute_order_lookup")
+    builder.add_edge("execute_order_lookup", "shipment_delivery_decision")
+    builder.add_edge("shipment_delivery_decision", "execute_iran_post_tracking")
+    builder.add_edge("execute_iran_post_tracking", "shipment_delivery_decision_after_tracking")
+    builder.add_edge("shipment_delivery_decision_after_tracking", "generate_draft")
+    builder.add_edge("generate_draft", "grounded_reply")
+    builder.add_edge("grounded_reply", "safety_gate")
     builder.add_edge("safety_gate", "human_review_handoff")
     builder.add_edge("human_review_handoff", END)
 
@@ -146,6 +182,28 @@ def build_safe_run_report(
             "extracted_entities": state.get("extracted_entities"),
             "knowledge_hints": state.get("knowledge_hints"),
             "draft_reply": state.get("draft_reply"),
+            "graph_tools_enabled": state.get("graph_tools_enabled"),
+            "graph_tool_metadata": state.get("graph_tool_metadata"),
+            "graph_tool_results": state.get("graph_tool_results"),
+            "shipment_delivery_decision_type": state.get("shipment_delivery_decision_type"),
+            "multi_order_decision_type": state.get("multi_order_decision_type"),
+            "multi_order_reply_used": state.get("multi_order_reply_used"),
+            "multi_order_summary": state.get("multi_order_summary"),
+            "decision_used_order_lookup_result": state.get("decision_used_order_lookup_result"),
+            "order_lookup_result_source": state.get("order_lookup_result_source"),
+            "order_lookup_auto_triggered": state.get("order_lookup_auto_triggered"),
+            "tool_grounded_reply_used": state.get("tool_grounded_reply_used"),
+            "order_lookup_found": (state.get("order_lookup_result", {}) or {}).get("found")
+            if isinstance(state.get("order_lookup_result"), Mapping)
+            else None,
+            "order_delivered_in_inchand": (state.get("order_lookup_result", {}) or {}).get(
+                "is_delivered_in_inchand"
+            )
+            if isinstance(state.get("order_lookup_result"), Mapping)
+            else None,
+            "iran_post_verified": (state.get("iran_post_tracking_result", {}) or {}).get("verified")
+            if isinstance(state.get("iran_post_tracking_result"), Mapping)
+            else None,
             "human_review_payload": handoff,
             "errors": state.get("errors") or [],
         },
@@ -211,6 +269,10 @@ def resolve_ticket_for_sandbox(
                 extracted_iban_masked=match.extracted_iban_masked,
                 entity_warnings_summary=match.entity_warnings_summary,
                 detected_intent=match.detected_intent,
+                shop_id=match.shop_id,
+                seller_id=match.seller_id,
+                shop_name=match.shop_name,
+                shop_identity_available=match.shop_identity_available,
             )
     raise ValueError(
         f"room_id {room_id} has no original_vendor_issue_preview; provide --redacted-jsonl",
@@ -249,21 +311,87 @@ def initial_state_from_ticket(
     llm_model: str = "mock-vendor-ticket-drafter",
     generate_fn: Any | None = None,
     knowledge_hints_enabled: bool = False,
+    settings: AppSettings | None = None,
+    conversation_snapshot: Any | None = None,
+    source_mode: str = "historical_replay",
 ) -> AgenticSandboxState:
     """Build initial sandbox state from an operator ticket."""
+    from app.config import get_settings
+    from app.tickets.conversation_models import ConversationTicketSnapshot
+    from app.workflows.multi_turn_ticket_context import (
+        build_multi_turn_context,
+        multi_turn_context_metadata_row,
+        resolve_extraction_text_for_context,
+        resolve_response_target_text,
+    )
+
+    cfg = settings or get_settings()
     sources = resolve_first_turn_text_sources_from_ticket(ticket)
-    return initial_agentic_sandbox_state(
+    display_text = sources.display_text
+    extraction_text = sources.extraction_text
+
+    multi_meta: dict[str, Any] | None = None
+    multi_active = False
+    response_target = ""
+    multi_extraction = extraction_text
+
+    snapshot: ConversationTicketSnapshot | None = None
+    if isinstance(conversation_snapshot, ConversationTicketSnapshot):
+        snapshot = conversation_snapshot
+
+    if cfg.multi_turn_context_enabled and snapshot is not None:
+        multi_ctx = build_multi_turn_context(snapshot, settings=cfg)
+        multi_meta = multi_turn_context_metadata_row(multi_ctx)
+        multi_active = True
+        response_target = resolve_response_target_text(
+            context=multi_ctx,
+            fallback_first_turn=display_text,
+            multi_turn_enabled=True,
+        )
+        multi_extraction = resolve_extraction_text_for_context(
+            context=multi_ctx,
+            fallback_extraction=extraction_text,
+            multi_turn_enabled=True,
+        )
+        if response_target:
+            display_text = response_target
+
+    state = initial_agentic_sandbox_state(
         room_id=ticket.room_id,
         ticket_label=ticket.ticket_label,
         route_label=ticket.route_label,
-        first_turn_text=sources.display_text,
+        first_turn_text=display_text,
         full_first_vendor_message_text=(ticket.full_first_vendor_message_text or ""),
-        first_turn_extraction_text=sources.extraction_text,
+        first_turn_extraction_text=multi_extraction,
         entity_extraction_source=sources.entity_extraction_source,
-        entity_extraction_source_char_count=sources.entity_extraction_source_char_count,
-        display_preview_char_count=sources.display_preview_char_count,
+        entity_extraction_source_char_count=len(multi_extraction),
+        display_preview_char_count=len(display_text),
         llm_provider=llm_provider,
         llm_model=llm_model,
         generate_fn=generate_fn,
         knowledge_hints_enabled=knowledge_hints_enabled,
+        shop_id=ticket.shop_id,
+        seller_id=ticket.seller_id,
+        shop_name=ticket.shop_name,
+        shop_identity_available=bool(
+            ticket.shop_identity_available
+            if ticket.shop_identity_available is not None
+            else (ticket.shop_id or ticket.seller_id or ticket.shop_name)
+        ),
+        source_mode=source_mode,
+        graph_tools_enabled=bool(
+            cfg.agentic_graph_read_only_tools_enabled
+            and source_mode
+            in {
+                item.strip()
+                for item in (cfg.agentic_graph_tool_execution_source_modes or "").split(",")
+                if item.strip()
+            }
+        ),
     )
+    if multi_meta is not None:
+        state["multi_turn_context_metadata"] = multi_meta
+        state["multi_turn_active"] = multi_active
+        state["response_target_seller_text"] = response_target
+        state["multi_turn_extraction_text"] = multi_extraction
+    return state

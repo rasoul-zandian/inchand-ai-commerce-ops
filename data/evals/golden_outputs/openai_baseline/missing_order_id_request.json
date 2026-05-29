@@ -1,0 +1,14 @@
+{
+  "scenario_id": "missing_order_id_request",
+  "draft_fingerprint": "5eccf792a43880266c2c4b54532093f25a2076ce3e353af491b14c665637b862",
+  "detected_intent": "order_status_review",
+  "suggested_action": "check_order_status",
+  "reflection_rewrite_applied": false,
+  "should_generate_draft": null,
+  "policy_question_type": "none",
+  "reflection_issue_types": [],
+  "graph_status": "ok",
+  "eval_passed": true,
+  "skip_reason": null,
+  "updated_at_utc": "2026-05-26T14:04:21+00:00"
+}

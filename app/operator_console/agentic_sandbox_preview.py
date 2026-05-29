@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, MutableMapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from app.agentic_sandbox.agentic_graph import (
@@ -47,6 +47,19 @@ _FORBIDDEN_PREVIEW_KEYS = frozenset(
         "_llm_provider",
         "_llm_model",
         "knowledge_hints",
+        "raw_generated_draft",
+        "pre_reflection_draft",
+        "final_reflected_draft",
+        "final_draft_reflection_comparison",
+    },
+)
+
+# Session-only preview fields — never exported via to_public_dict / reports.
+_SESSION_ONLY_PREVIEW_FIELDS = frozenset(
+    {
+        "raw_generated_draft",
+        "pre_reflection_draft",
+        "final_reflected_draft",
     },
 )
 
@@ -67,6 +80,7 @@ _INTERNAL_PREVIEW_STATE_KEYS_TO_STRIP = frozenset(
         "human_review_payload",
         "knowledge_hints",
         "knowledge_hints_for_prompt",
+        "final_draft_reflection_comparison",
         "_generate_fn",
         "_llm_provider",
         "_llm_model",
@@ -123,6 +137,49 @@ class AgenticSandboxPreviewResult:
     draft_style: str | None = None
     draft_is_mock: bool = False
     draft_provider: str | None = None
+    reflection_reviewed: bool | None = None
+    reflection_rewrite_applied: bool | None = None
+    reflection_issue_types: tuple[str, ...] = ()
+    reflection_issue_count: int = 0
+    reflection_enabled: bool | None = None
+    reflection_provider: str | None = None
+    reflection_comparison_available: bool = False
+    reflection_runtime_shop_identity_available: bool | None = None
+    reflection_runtime_shop_id_present: bool | None = None
+    reflection_unnecessary_identifier_detected: bool | None = None
+    multi_turn_context_enabled: bool | None = None
+    multi_turn_message_count: int | None = None
+    multi_turn_latest_sender_type: str | None = None
+    multi_turn_pending_request_type: str | None = None
+    multi_turn_pending_request_fulfilled: bool | None = None
+    multi_turn_should_generate_draft: bool | None = None
+    multi_turn_skip_reason: str | None = None
+    tracking_verification_recommended: bool | None = None
+    tracking_verification_carrier_candidate: str | None = None
+    inchand_order_lookup_recommended: bool | None = None
+    inchand_order_id_candidate: str | None = None
+    graph_tools_enabled: bool | None = None
+    graph_tools_planned: tuple[str, ...] = ()
+    graph_tools_executed: tuple[str, ...] = ()
+    graph_tools_blocked: tuple[str, ...] = ()
+    graph_tools_blocked_reasons: dict[str, str] = field(default_factory=dict)
+    shipment_delivery_decision_type: str | None = None
+    multi_order_decision_type: str | None = None
+    multi_order_reply_used: bool | None = None
+    multi_order_summary: dict[str, Any] = field(default_factory=dict)
+    multi_order_decision: dict[str, Any] = field(default_factory=dict)
+    decision_used_order_lookup_result: bool | None = None
+    order_lookup_result_source: str | None = None
+    order_lookup_auto_triggered: bool | None = None
+    tool_grounded_reply_used: bool | None = None
+    order_lookup_found: bool | None = None
+    order_delivered_in_inchand: bool | None = None
+    parcel_tracking_code_present: bool | None = None
+    iran_post_verified: bool | None = None
+    policy_question_type: str | None = None
+    raw_generated_draft: str | None = None
+    pre_reflection_draft: str | None = None
+    final_reflected_draft: str | None = None
 
     def to_public_dict(self) -> dict[str, Any]:
         return {
@@ -165,24 +222,200 @@ class AgenticSandboxPreviewResult:
             "execution_allowed": self.execution_allowed,
             "customer_send_allowed": self.customer_send_allowed,
             "errors": list(self.errors),
+            "reflection_reviewed": self.reflection_reviewed,
+            "reflection_rewrite_applied": self.reflection_rewrite_applied,
+            "reflection_issue_types": list(self.reflection_issue_types),
+            "reflection_issue_count": self.reflection_issue_count,
+            "reflection_enabled": self.reflection_enabled,
+            "reflection_provider": self.reflection_provider,
+            "reflection_comparison_available": self.reflection_comparison_available,
+            "reflection_runtime_shop_identity_available": (
+                self.reflection_runtime_shop_identity_available
+            ),
+            "reflection_runtime_shop_id_present": self.reflection_runtime_shop_id_present,
+            "reflection_unnecessary_identifier_detected": (
+                self.reflection_unnecessary_identifier_detected
+            ),
+            "multi_turn_context_enabled": self.multi_turn_context_enabled,
+            "multi_turn_message_count": self.multi_turn_message_count,
+            "multi_turn_latest_sender_type": self.multi_turn_latest_sender_type,
+            "multi_turn_pending_request_type": self.multi_turn_pending_request_type,
+            "multi_turn_pending_request_fulfilled": self.multi_turn_pending_request_fulfilled,
+            "multi_turn_should_generate_draft": self.multi_turn_should_generate_draft,
+            "multi_turn_skip_reason": self.multi_turn_skip_reason,
+            "tracking_verification_recommended": self.tracking_verification_recommended,
+            "tracking_verification_carrier_candidate": (
+                self.tracking_verification_carrier_candidate
+            ),
+            "inchand_order_lookup_recommended": self.inchand_order_lookup_recommended,
+            "inchand_order_id_candidate": self.inchand_order_id_candidate,
+            "graph_tools_enabled": self.graph_tools_enabled,
+            "graph_tools_planned": list(self.graph_tools_planned),
+            "graph_tools_executed": list(self.graph_tools_executed),
+            "graph_tools_blocked": list(self.graph_tools_blocked),
+            "graph_tools_blocked_reasons": dict(self.graph_tools_blocked_reasons),
+            "shipment_delivery_decision_type": self.shipment_delivery_decision_type,
+            "multi_order_decision_type": self.multi_order_decision_type,
+            "multi_order_reply_used": self.multi_order_reply_used,
+            "multi_order_summary": dict(self.multi_order_summary),
+            "multi_order_decision": dict(self.multi_order_decision),
+            "decision_used_order_lookup_result": self.decision_used_order_lookup_result,
+            "order_lookup_result_source": self.order_lookup_result_source,
+            "order_lookup_auto_triggered": self.order_lookup_auto_triggered,
+            "tool_grounded_reply_used": self.tool_grounded_reply_used,
+            "order_lookup_found": self.order_lookup_found,
+            "order_delivered_in_inchand": self.order_delivered_in_inchand,
+            "parcel_tracking_code_present": self.parcel_tracking_code_present,
+            "iran_post_verified": self.iran_post_verified,
         }
+
+
+def _multi_turn_should_skip_draft_generation(initial: Mapping[str, Any]) -> bool:
+    multi_meta = initial.get("multi_turn_context_metadata")
+    if not isinstance(multi_meta, dict):
+        return False
+    return multi_meta.get("multi_turn_should_generate_draft") is False
+
+
+def _build_skipped_draft_preview(
+    ticket: OperatorTicket,
+    initial: Mapping[str, Any],
+    *,
+    settings: AppSettings,
+) -> AgenticSandboxPreviewResult:
+    """Return a safe preview when multi-turn gating blocks draft generation (no graph run)."""
+    multi_meta = initial.get("multi_turn_context_metadata")
+    if not isinstance(multi_meta, dict):
+        multi_meta = {}
+    skip_reason = multi_meta.get("multi_turn_skip_reason")
+    skip_reason_str = str(skip_reason).strip() if skip_reason else None
+    node_statuses = {node: "skipped" for node in NODE_ORDER}
+    summaries = (
+        (
+            "build_first_turn_context",
+            "skipped",
+            f"draft_gating:{skip_reason_str or 'unknown'}",
+        ),
+    )
+    return AgenticSandboxPreviewResult(
+        room_id=ticket.room_id,
+        graph_status="skipped",
+        node_statuses=node_statuses,
+        node_summaries=summaries,
+        detected_intent=None,
+        conceptual_intent_fa=None,
+        suggested_action=None,
+        suggested_action_reason=None,
+        actionability_actionable=None,
+        missing_required_entities=None,
+        actionability_validation_reason=None,
+        entity_source=None,
+        entity_extraction_source=initial.get("entity_extraction_source"),
+        entity_extraction_source_char_count=initial.get("entity_extraction_source_char_count"),
+        display_preview_char_count=initial.get("display_preview_char_count"),
+        order_id_count=0,
+        product_id_count=0,
+        extracted_order_ids=None,
+        extracted_product_ids=None,
+        extracted_tracking_code=None,
+        extracted_tracking_carrier=None,
+        extracted_iban_masked=None,
+        entity_warnings_summary=None,
+        knowledge_hints_enabled=settings.operator_agentic_sandbox_knowledge_hints_enabled,
+        knowledge_hint_count=0,
+        knowledge_hint_document_types=(),
+        draft_char_count=0,
+        safety_status=None,
+        human_review_required=True,
+        execution_allowed=False,
+        customer_send_allowed=False,
+        errors=(),
+        draft_reply=None,
+        draft_style=None,
+        draft_is_mock=False,
+        draft_provider=None,
+        reflection_reviewed=False,
+        reflection_rewrite_applied=False,
+        reflection_issue_types=(),
+        reflection_issue_count=0,
+        reflection_enabled=settings.final_draft_reflection_enabled,
+        reflection_provider=(settings.final_draft_reflection_provider or "rule_based").strip(),
+        reflection_comparison_available=False,
+        multi_turn_context_enabled=multi_meta.get("multi_turn_context_enabled"),
+        multi_turn_message_count=multi_meta.get("multi_turn_message_count"),
+        multi_turn_latest_sender_type=_optional_str(
+            multi_meta.get("multi_turn_latest_sender_type"),
+        ),
+        multi_turn_pending_request_type=_optional_str(
+            multi_meta.get("multi_turn_pending_request_type"),
+        ),
+        multi_turn_pending_request_fulfilled=multi_meta.get("multi_turn_pending_request_fulfilled"),
+        multi_turn_should_generate_draft=False,
+        multi_turn_skip_reason=skip_reason_str,
+        tracking_verification_recommended=multi_meta.get("tracking_verification_recommended"),
+        tracking_verification_carrier_candidate=_optional_str(
+            multi_meta.get("tracking_verification_carrier_candidate"),
+        ),
+        inchand_order_lookup_recommended=multi_meta.get("inchand_order_lookup_recommended"),
+        inchand_order_id_candidate=_optional_str(multi_meta.get("inchand_order_id_candidate")),
+        graph_tools_enabled=False,
+        graph_tools_planned=(),
+        graph_tools_executed=(),
+        graph_tools_blocked=(),
+        graph_tools_blocked_reasons={},
+        shipment_delivery_decision_type=None,
+        multi_order_decision_type=None,
+        multi_order_reply_used=False,
+        multi_order_summary={},
+        multi_order_decision={},
+        decision_used_order_lookup_result=None,
+        order_lookup_result_source="none",
+        order_lookup_auto_triggered=False,
+        tool_grounded_reply_used=False,
+        order_lookup_found=None,
+        order_delivered_in_inchand=None,
+        parcel_tracking_code_present=None,
+        iran_post_verified=None,
+        policy_question_type="none",
+    )
 
 
 def build_agentic_preview_input_from_ticket(
     ticket: OperatorTicket,
     *,
     settings: AppSettings | None = None,
+    conversation_snapshot: Any | None = None,
+    source_mode: str = "historical_replay",
 ) -> AgenticSandboxState:
     """Build sandbox initial state from HITL-safe ticket fields (first-turn only)."""
+    from app.operator_console.assisted_ticket_input_builder import (
+        AssistedSourceMode,
+        build_assisted_graph_input_from_operator_ticket,
+    )
+
     cfg = settings or get_settings()
+    mode: AssistedSourceMode = (
+        source_mode  # type: ignore[assignment]
+        if source_mode in {"historical_replay", "live_api_feed", "manual_sandbox_chat"}
+        else "historical_replay"
+    )
+    bundle = build_assisted_graph_input_from_operator_ticket(
+        ticket,
+        conversation_snapshot=conversation_snapshot,
+        source_mode=mode,
+        settings=cfg,
+    )
     provider = cfg.operator_agentic_sandbox_provider.strip().lower()
     model = cfg.openai_draft_model if provider == "openai" else "mock-vendor-ticket-drafter"
     return graph_initial_from_ticket(
-        ticket,
+        bundle.ticket,
         llm_provider=provider,
         llm_model=model,
         generate_fn=None,
         knowledge_hints_enabled=cfg.operator_agentic_sandbox_knowledge_hints_enabled,
+        settings=cfg,
+        conversation_snapshot=bundle.conversation_snapshot,
+        source_mode=mode,
     )
 
 
@@ -367,6 +600,64 @@ def sanitize_agentic_preview_result(
     node_statuses = _node_statuses_from_state(safe_state)
     safety = safe_state.get("safety_status")
     graph_ok = safety == "passed" and not errors and draft_chars > 0
+    reflection_metrics = safe_state.get("final_draft_reflection_metrics") or {}
+    if not isinstance(reflection_metrics, dict):
+        reflection_metrics = {}
+    reflection_issue_types_raw = reflection_metrics.get("reflection_issue_types") or []
+    reflection_issue_types = tuple(
+        str(item) for item in reflection_issue_types_raw if str(item).strip()
+    )
+    cfg = settings or get_settings()
+    comparison = state.get("final_draft_reflection_comparison") or {}
+    if not isinstance(comparison, dict):
+        comparison = {}
+    pre_reflection = _optional_str(comparison.get("pre_reflection_draft"))
+    final_reflected = _optional_str(comparison.get("final_reflected_draft")) or safe_draft
+    raw_generated = _optional_str(comparison.get("raw_generated_draft"))
+    reflection_enabled = comparison.get("reflection_enabled")
+    if reflection_enabled is None:
+        reflection_enabled = cfg.final_draft_reflection_enabled
+    reflection_provider = _optional_str(comparison.get("reflection_provider")) or (
+        (cfg.final_draft_reflection_provider or "rule_based").strip()
+    )
+    if comparison:
+        from app.agentic_sandbox.final_draft_reflection import (
+            assert_reflection_comparison_session_safe,
+        )
+
+        assert_reflection_comparison_session_safe(comparison)
+    if safe_draft:
+        if not pre_reflection:
+            pre_reflection = safe_draft
+        if not final_reflected:
+            final_reflected = safe_draft
+    reflection_comparison_available = bool((pre_reflection or "").strip())
+
+    multi_meta = safe_state.get("multi_turn_context_metadata") or {}
+    if not isinstance(multi_meta, dict):
+        multi_meta = {}
+    graph_tool_metadata = safe_state.get("graph_tool_metadata") or {}
+    if not isinstance(graph_tool_metadata, dict):
+        graph_tool_metadata = {}
+    graph_tool_results = safe_state.get("graph_tool_results") or {}
+    if not isinstance(graph_tool_results, dict):
+        graph_tool_results = {}
+    order_lookup_result = safe_state.get("order_lookup_result") or {}
+    if not isinstance(order_lookup_result, dict):
+        order_lookup_result = {}
+    iran_result = safe_state.get("iran_post_tracking_result") or {}
+    if not isinstance(iran_result, dict):
+        iran_result = {}
+
+    from app.knowledge.policy_fact_extraction import resolve_policy_question_type
+
+    seller_text = _seller_text_from_preview_state(state)
+    policy_question_type = resolve_policy_question_type(
+        seller_text,
+        detected_intent=_optional_str(safe_state.get("detected_intent")),
+        conceptual_intent_fa=_optional_str(safe_state.get("conceptual_intent_fa")),
+        suggested_action=_optional_str(safe_state.get("suggested_action")),
+    )
 
     return AgenticSandboxPreviewResult(
         room_id=str(safe_state.get("room_id") or ""),
@@ -411,6 +702,82 @@ def sanitize_agentic_preview_result(
         execution_allowed=bool(safe_state.get("execution_allowed")),
         customer_send_allowed=bool(safe_state.get("customer_send_allowed")),
         errors=errors,
+        reflection_reviewed=reflection_metrics.get("reflection_reviewed"),
+        reflection_rewrite_applied=reflection_metrics.get("reflection_rewrite_applied"),
+        reflection_issue_types=reflection_issue_types,
+        reflection_issue_count=len(reflection_issue_types),
+        reflection_enabled=bool(reflection_enabled),
+        reflection_provider=reflection_provider,
+        reflection_comparison_available=reflection_comparison_available,
+        reflection_runtime_shop_identity_available=reflection_metrics.get(
+            "reflection_runtime_shop_identity_available",
+        ),
+        reflection_runtime_shop_id_present=reflection_metrics.get(
+            "reflection_runtime_shop_id_present",
+        ),
+        reflection_unnecessary_identifier_detected=reflection_metrics.get(
+            "reflection_unnecessary_identifier_detected",
+        ),
+        multi_turn_context_enabled=multi_meta.get("multi_turn_context_enabled"),
+        multi_turn_message_count=multi_meta.get("multi_turn_message_count"),
+        multi_turn_latest_sender_type=_optional_str(
+            multi_meta.get("multi_turn_latest_sender_type")
+        ),
+        multi_turn_pending_request_type=_optional_str(
+            multi_meta.get("multi_turn_pending_request_type"),
+        ),
+        multi_turn_pending_request_fulfilled=multi_meta.get("multi_turn_pending_request_fulfilled"),
+        multi_turn_should_generate_draft=multi_meta.get("multi_turn_should_generate_draft"),
+        multi_turn_skip_reason=_optional_str(multi_meta.get("multi_turn_skip_reason")),
+        tracking_verification_recommended=multi_meta.get("tracking_verification_recommended"),
+        tracking_verification_carrier_candidate=_optional_str(
+            multi_meta.get("tracking_verification_carrier_candidate"),
+        ),
+        inchand_order_lookup_recommended=multi_meta.get("inchand_order_lookup_recommended"),
+        inchand_order_id_candidate=_optional_str(multi_meta.get("inchand_order_id_candidate")),
+        graph_tools_enabled=safe_state.get("graph_tools_enabled"),
+        graph_tools_planned=tuple(
+            str(item) for item in (graph_tool_metadata.get("planned_tools") or []) if str(item)
+        ),
+        graph_tools_executed=tuple(
+            str(item) for item in (graph_tool_metadata.get("executed_tools") or []) if str(item)
+        ),
+        graph_tools_blocked=tuple(
+            str(item) for item in (graph_tool_metadata.get("blocked_tools") or []) if str(item)
+        ),
+        graph_tools_blocked_reasons={
+            str(key): str(value)
+            for key, value in (graph_tool_metadata.get("blocked_reasons") or {}).items()
+            if str(key).strip() and str(value).strip()
+        },
+        shipment_delivery_decision_type=_optional_str(
+            safe_state.get("shipment_delivery_decision_type"),
+        ),
+        multi_order_decision_type=_optional_str(safe_state.get("multi_order_decision_type")),
+        multi_order_reply_used=safe_state.get("multi_order_reply_used"),
+        multi_order_summary=dict(safe_state.get("multi_order_summary") or {}),
+        multi_order_decision=dict(safe_state.get("multi_order_decision") or {}),
+        decision_used_order_lookup_result=safe_state.get("decision_used_order_lookup_result"),
+        order_lookup_result_source=_optional_str(safe_state.get("order_lookup_result_source"))
+        or "none",
+        order_lookup_auto_triggered=safe_state.get("order_lookup_auto_triggered"),
+        tool_grounded_reply_used=safe_state.get("tool_grounded_reply_used"),
+        order_lookup_found=bool(order_lookup_result.get("found")) if order_lookup_result else None,
+        order_delivered_in_inchand=(
+            bool(order_lookup_result.get("is_delivered_in_inchand"))
+            if order_lookup_result
+            else None
+        ),
+        parcel_tracking_code_present=(
+            bool(order_lookup_result.get("primary_parcel_tracking_code"))
+            if order_lookup_result
+            else None
+        ),
+        iran_post_verified=bool(iran_result.get("verified")) if iran_result else None,
+        policy_question_type=policy_question_type,
+        raw_generated_draft=raw_generated,
+        pre_reflection_draft=pre_reflection,
+        final_reflected_draft=final_reflected,
     )
 
 
@@ -423,6 +790,18 @@ def _optional_str(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _seller_text_from_preview_state(state: Mapping[str, Any]) -> str:
+    for key in (
+        "full_first_vendor_message_text",
+        "first_turn_text",
+        "original_vendor_issue_preview",
+    ):
+        value = state.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
 
 
 def assert_agentic_preview_safe(result: AgenticSandboxPreviewResult) -> None:
@@ -441,6 +820,11 @@ def assert_agentic_preview_safe(result: AgenticSandboxPreviewResult) -> None:
         assert_draft_reply_safe(draft_reply, max_chars=hard_max)
 
     public = result.to_public_dict()
+    for session_only_key in _SESSION_ONLY_PREVIEW_FIELDS:
+        if session_only_key in public:
+            raise ValueError(
+                f"agentic preview public export must not contain session field: {session_only_key}"
+            )
     for key in _collect_mapping_keys(public):
         if key in _FORBIDDEN_PREVIEW_KEYS:
             raise ValueError(f"agentic preview must not contain forbidden key: {key}")
@@ -455,10 +839,21 @@ def run_agentic_preview_for_ticket(
     ticket: OperatorTicket,
     *,
     settings: AppSettings | None = None,
+    conversation_snapshot: Any | None = None,
+    source_mode: str = "historical_replay",
 ) -> AgenticSandboxPreviewResult:
     """Run sandbox LangGraph for one ticket; return session-safe preview metadata only."""
     cfg = settings or get_settings()
-    initial = build_agentic_preview_input_from_ticket(ticket, settings=cfg)
+    initial = build_agentic_preview_input_from_ticket(
+        ticket,
+        settings=cfg,
+        conversation_snapshot=conversation_snapshot,
+        source_mode=source_mode,
+    )
+    if _multi_turn_should_skip_draft_generation(initial):
+        preview = _build_skipped_draft_preview(ticket, initial, settings=cfg)
+        assert_agentic_preview_safe(preview)
+        return preview
     runtime_cfg = _preview_runtime_settings(cfg)
     final = run_agentic_sandbox_workflow(initial, settings=runtime_cfg)
     preview = sanitize_agentic_preview_result(
@@ -493,6 +888,7 @@ def render_agentic_preview_markdown_or_lines(
         [
             "",
             f"- **{t('detected_intent', lang)}:** {result.detected_intent or '—'}",
+            f"- **policy_question_type:** {result.policy_question_type or 'none'}",
             f"- **conceptual_intent_fa:** {result.conceptual_intent_fa or '—'}",
             f"- **{t('suggested_action', lang)}:** {result.suggested_action or '—'}",
             f"- **suggested_action_reason:** {result.suggested_action_reason or '—'}",
@@ -532,6 +928,79 @@ def render_agentic_preview_markdown_or_lines(
     )
     if result.draft_reply:
         lines.append(f"- **{t('internal_draft_suggestion', lang)}:** (see block below)")
+    planned_tools = ", ".join(result.graph_tools_planned) if result.graph_tools_planned else "—"
+    executed_tools = ", ".join(result.graph_tools_executed) if result.graph_tools_executed else "—"
+    blocked_tools = ", ".join(result.graph_tools_blocked) if result.graph_tools_blocked else "—"
+    lines.extend(
+        [
+            "",
+            "**اجرای ابزارهای خواندنی در گراف / Read-only graph tool execution**",
+            f"- **tools_enabled:** {result.graph_tools_enabled}",
+            f"- **planned_tools:** {planned_tools}",
+            f"- **executed_tools:** {executed_tools}",
+            f"- **blocked_tools:** {blocked_tools}",
+            f"- **blocked_reasons:** {result.graph_tools_blocked_reasons or '—'}",
+            f"- **order_lookup_found:** {result.order_lookup_found}",
+            f"- **order_delivered_in_inchand:** {result.order_delivered_in_inchand}",
+            f"- **parcel_tracking_code_present:** {result.parcel_tracking_code_present}",
+            f"- **iran_post_verified:** {result.iran_post_verified}",
+            (
+                "- **shipment_delivery_decision_type:** "
+                f"{result.shipment_delivery_decision_type or '—'}"
+            ),
+            f"- **multi_order_decision_type:** {result.multi_order_decision_type or '—'}",
+            f"- **multi_order_reply_used:** {result.multi_order_reply_used}",
+            f"- **order_lookup_auto_triggered:** {result.order_lookup_auto_triggered}",
+            f"- **order_lookup_result_source:** {result.order_lookup_result_source or 'none'}",
+            (
+                "- **decision_used_order_lookup_result:** "
+                f"{result.decision_used_order_lookup_result}"
+            ),
+            f"- **grounded_reply_used:** {result.tool_grounded_reply_used}",
+        ],
+    )
+    if result.multi_order_decision:
+        summary = result.multi_order_summary or {}
+        per_order = result.multi_order_decision.get("per_order") or []
+        lines.extend(
+            [
+                "",
+                "**بررسی چند سفارش / Multi-order batch decision**",
+                f"- **batch_count:** {summary.get('batch_count')}",
+                f"- **executed_count:** {summary.get('executed_count')}",
+                f"- **skipped_count:** {summary.get('skipped_count')}",
+                f"- **limit_exceeded:** {summary.get('limit_exceeded')}",
+                f"- **aggregate_decision_type:** {result.multi_order_decision_type or '—'}",
+                "- **reply_origin:** `multi_order_decision`",
+            ],
+        )
+        if isinstance(per_order, list) and per_order:
+            lines.extend(
+                [
+                    "",
+                    (
+                        "| order_id | found | order_status | provider_status | parcel_status | "
+                        "has_tracking | delivered_in_inchand | decision_type | "
+                        "lookup_error_type |"
+                    ),
+                    "|----------|-------|--------------|-----------------|---------------|--------------|----------------------|---------------|-------------------|",
+                ],
+            )
+            for row in per_order:
+                if not isinstance(row, dict):
+                    continue
+                lines.append(
+                    "| "
+                    f"`{row.get('order_id') or '—'}` | "
+                    f"{row.get('found')} | "
+                    f"{row.get('order_status') or '—'} | "
+                    f"{row.get('provider_status') or '—'} | "
+                    f"{row.get('parcel_status') or '—'} | "
+                    f"{row.get('has_tracking')} | "
+                    f"{row.get('delivered_in_inchand')} | "
+                    f"`{row.get('decision_type') or '—'}` | "
+                    f"`{row.get('lookup_error_type') or '—'}` |"
+                )
     if result.errors:
         lines.append("")
         lines.append("**Errors**")

@@ -1,0 +1,14 @@
+{
+  "scenario_id": "settlement_grounded_policy",
+  "draft_fingerprint": "c3599a51240d2054374774460b8f15a9dc61b7cd012f6ab143c79fcfa11833de",
+  "detected_intent": "settlement_status_inquiry",
+  "suggested_action": "answer_policy_question",
+  "reflection_rewrite_applied": false,
+  "should_generate_draft": null,
+  "policy_question_type": "settlement_timing",
+  "reflection_issue_types": [],
+  "graph_status": "ok",
+  "eval_passed": true,
+  "skip_reason": null,
+  "updated_at_utc": "2026-05-26T14:04:21+00:00"
+}

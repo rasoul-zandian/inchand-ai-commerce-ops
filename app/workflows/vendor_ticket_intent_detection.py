@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 from app.knowledge.knowledge_models import KnowledgeDocumentType
+from app.workflows.cancellation_request_detection import is_cancellation_request_message
 from app.workflows.operational_entity_extraction import extract_operational_entities
 from app.workflows.seller_notification_detection import (
     SellerNotificationDetectionResult,
@@ -80,6 +81,15 @@ _ORDER_STATUS_MARKERS = (
     "سفارش کجاست",
 )
 
+_COMMISSION_POLICY_MARKERS = (
+    "کمیسیون",
+    "کارمزد فروش",
+    "کارمزد",
+    "هزینه فروش",
+    "درصد کمیسیون",
+    "کمیسیون فروش",
+)
+
 _OPERATIONAL_ASK_MARKERS = (
     "ثبت کنید",
     "بررسی کنید",
@@ -96,11 +106,13 @@ class VendorTicketIntent(StrEnum):
     PRODUCT_APPROVAL_REVIEW = "product_approval_review"
     PRODUCT_PUBLISHING_QUESTION = "product_publishing_question"
     PROHIBITED_GOODS_QUESTION = "prohibited_goods_question"
+    COMMISSION_POLICY_QUESTION = "commission_policy_question"
     DELIVERY_CONFIRMATION_REQUEST = "delivery_confirmation_request"
     TRACKING_CODE_NOTIFICATION = "tracking_code_notification"
     ORDER_STATUS_REVIEW = "order_status_review"
     SELLER_NOTIFICATION = "seller_notification"
     SELLER_OPERATIONAL_REQUEST = "seller_operational_request"
+    CANCELLATION_REQUEST = "cancellation_request"
     COMPLAINT_ESCALATION = "complaint_escalation"
     GENERAL_VENDOR_SUPPORT = "general_vendor_support"
     UNKNOWN = "unknown"
@@ -124,6 +136,10 @@ _INTENT_DOCUMENT_TYPES: dict[VendorTicketIntent, tuple[str, ...]] = {
         KnowledgeDocumentType.PROHIBITED_GOODS.value,
         KnowledgeDocumentType.VENDOR_GENERAL_POLICY.value,
     ),
+    VendorTicketIntent.COMMISSION_POLICY_QUESTION: (
+        KnowledgeDocumentType.VENDOR_GENERAL_POLICY.value,
+        KnowledgeDocumentType.SUPPORT_FAQ.value,
+    ),
     VendorTicketIntent.DELIVERY_CONFIRMATION_REQUEST: (
         KnowledgeDocumentType.SHIPPING_DELIVERY_RULES.value,
     ),
@@ -139,6 +155,10 @@ _INTENT_DOCUMENT_TYPES: dict[VendorTicketIntent, tuple[str, ...]] = {
         KnowledgeDocumentType.SUPPORT_FAQ.value,
     ),
     VendorTicketIntent.SELLER_OPERATIONAL_REQUEST: (
+        KnowledgeDocumentType.SUPPORT_FAQ.value,
+        KnowledgeDocumentType.VENDOR_GENERAL_POLICY.value,
+    ),
+    VendorTicketIntent.CANCELLATION_REQUEST: (
         KnowledgeDocumentType.SUPPORT_FAQ.value,
         KnowledgeDocumentType.VENDOR_GENERAL_POLICY.value,
     ),
@@ -292,6 +312,11 @@ def _keyword_intent(normalized: str, *, reasons: list[str]) -> VendorTicketInten
         _append_reason(reasons, f"keyword:{prohibited}")
         return VendorTicketIntent.PROHIBITED_GOODS_QUESTION
 
+    commission = _has_any(normalized, _COMMISSION_POLICY_MARKERS)
+    if commission:
+        _append_reason(reasons, f"keyword:{commission}")
+        return VendorTicketIntent.COMMISSION_POLICY_QUESTION
+
     approval = _has_any(normalized, _PRODUCT_APPROVAL_MARKERS)
     if approval:
         _append_reason(reasons, f"keyword:{approval}")
@@ -389,8 +414,10 @@ def detect_vendor_ticket_intent(
 
     intent: VendorTicketIntent | None = None
 
-    panel = _has_any(normalized, _SETTLEMENT_PANEL_MARKERS)
-    if panel:
+    if is_cancellation_request_message(cleaned):
+        _append_reason(reasons, "cancellation_request")
+        intent = VendorTicketIntent.CANCELLATION_REQUEST
+    elif panel := _has_any(normalized, _SETTLEMENT_PANEL_MARKERS):
         _append_reason(reasons, f"keyword:{panel}")
         intent = VendorTicketIntent.SETTLEMENT_PANEL_ACCESS_ISSUE
     elif seller.complaint_language_detected or _has_any(normalized, _COMPLAINT_MARKERS):

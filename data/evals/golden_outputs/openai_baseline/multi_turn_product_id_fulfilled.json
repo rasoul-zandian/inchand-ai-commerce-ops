@@ -1,0 +1,18 @@
+{
+  "scenario_id": "multi_turn_product_id_fulfilled",
+  "draft_fingerprint": "2f054201b5a7ce7cdfbfefce2868b1c9a9ef1cfe4ebd357579cc059475aa2d98",
+  "detected_intent": "unknown",
+  "suggested_action": "monitor",
+  "reflection_rewrite_applied": false,
+  "should_generate_draft": true,
+  "policy_question_type": "none",
+  "reflection_issue_types": [
+    "unnecessary_question",
+    "over_questioning",
+    "missing_operational_ack"
+  ],
+  "graph_status": "ok",
+  "eval_passed": true,
+  "skip_reason": null,
+  "updated_at_utc": "2026-05-26T14:04:21+00:00"
+}

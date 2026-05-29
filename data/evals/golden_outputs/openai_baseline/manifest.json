@@ -1,0 +1,27 @@
+{
+  "baseline_id": "openai_multi_turn_v1",
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "knowledge_hints_enabled": true,
+  "multi_turn_context_enabled": false,
+  "final_draft_reflection_enabled": true,
+  "reflection_provider": "rule_based",
+  "frozen_at_utc": "2026-05-26T14:04:21+00:00",
+  "scenario_count": 35,
+  "eval_passed_count": 35,
+  "eval_failed_count": 0,
+  "reflection_metrics": {
+    "rewrite_applied_count": 6,
+    "rewrite_rate": 0.17142857142857143,
+    "saved_bad_draft_count": 6,
+    "save_rate": 0.17142857142857143,
+    "reflection_reviewed_count": 32,
+    "issue_type_counts": {
+      "missing_operational_ack": 10,
+      "over_questioning": 5,
+      "policy_grounding_failure": 1,
+      "repeated_identifier_request": 3,
+      "unnecessary_question": 5
+    }
+  }
+}

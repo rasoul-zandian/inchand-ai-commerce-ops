@@ -1192,6 +1192,33 @@ PYTHONPATH=. python3.11 scripts/build_agentic_sandbox_graduation_report.py --ove
 
 Outputs: `reports/agentic_sandbox_graduation_summary.json` and `reports/agentic_sandbox_graduation_report.md`.
 
+**Manual sandbox chat room (Step 222, operator console only):** Third sidebar data source — **Manual sandbox chat** / FA «چت آزمایشی دستی» — for local seller/support conversation simulation without live API dependency. Module: `app/operator_console/manual_chat_sandbox.py`. Build multi-turn `ConversationTicketSnapshot` messages (`source_system=manual_sandbox_chat`) and run **Operator-assisted agentic mode** with the same detail panels as historical replay / live feed (intent, draft, reflection comparison, safety flags, technical expander). **Optional `ticket_label`:** auto/unset (no forced category; metadata `ticket_label_source=manual_unset`) or explicit complaint / fund / support. Role-colored chat bubbles (seller blue `#E8F1FF`, support green `#EAF8EA`), RTL-safe HTML. **No send, no live ticket mutation, no write APIs** — caption: «این یک شبیه‌سازی محلی است و هیچ پیامی به اینچند ارسال نمی‌شود.» Manual chat transcripts stay in **session-only** keys (`manual_sandbox_*`); not written to reports/JSONL by default. Assisted run is disabled when the latest meaningful message is from support.
+
+```bash
+MULTI_TURN_CONTEXT_ENABLED=true \
+OPERATOR_AGENTIC_ASSISTED_MODE_ENABLED=true \
+OPERATOR_AGENTIC_ASSISTED_PROVIDER=openai \
+OPERATOR_AGENTIC_ASSISTED_KNOWLEDGE_HINTS_ENABLED=true \
+FINAL_DRAFT_REFLECTION_ENABLED=true \
+FINAL_DRAFT_REFLECTION_PROVIDER=rule_based \
+PYTHONPATH=. python3.11 scripts/run_operator_console.py
+```
+
+Sidebar: **Data source → Manual sandbox chat**. Use for single-turn/multi-turn draft testing, optional `ticket_label` routing, and reflection before/after review. Adding a **seller** message auto-runs the assisted package and appends the final draft as an **AI suggested reply** support bubble (session-only; dedupe guards prevent rerun loops on Streamlit refresh). Human **support** messages do not auto-run. Optional **Regenerate latest AI reply** replaces the trailing AI bubble; **Remove last AI reply** drops it from the local thread.
+
+**Parity with historical/live assisted mode:** Manual sandbox uses the same canonical builder (`app/operator_console/assisted_ticket_input_builder.py`) as replay/live. For apples-to-apples comparisons: select the **same `ticket_label`**, ensure the **latest meaningful sender is seller**, and remember historical replay does not pass a conversation snapshot (first-turn path) until the thread has human support or multiple seller turns. AI-generated support bubbles stay in the UI thread but are excluded from entity extraction and pending-request detection. Debug divergent drafts via the console **Input parity / debug** expander or:
+
+```bash
+PYTHONPATH=. python3.11 scripts/compare_manual_vs_replay_assisted_input.py \
+  --room-id 7743 \
+  --manual-text "..." \
+  --ticket-label complaint \
+  --provider mock \
+  --overwrite
+```
+
+Outputs: `reports/manual_vs_replay_assisted_input_<room_id>.json` and `.md` (fingerprints/lengths only — no raw prompts).
+
 **Operator-assisted agentic mode (Step 206, HITL-only):** When `OPERATOR_AGENTIC_ASSISTED_MODE_ENABLED=true`, the operator console shows an **Operator-assisted agentic mode** section (distinct from **Agentic sandbox preview**). The sandbox LangGraph builds a **structured operator work package** in Streamlit `session_state` only — checklist plus safe graph metadata (intent, action, actionability, entities, hint document types, draft length, safety flags). **Graduation gate:** when `OPERATOR_AGENTIC_ASSISTED_REQUIRE_GRADUATION_READY=true` (default), reads `reports/agentic_sandbox_graduation_summary.json` and requires `overall_status=ready_for_operator_assisted_phase`; otherwise the section shows a warning and run stays disabled (console keeps working). **No execution, no customer send, no ticket mutation, no production graph.** Reuse **Sandbox preview review** feedback for graph evaluation (`reports/agentic_preview_review_feedback.jsonl`).
 
 ```bash
@@ -1238,7 +1265,166 @@ PYTHONPATH=. python3.11 scripts/run_live_first_turn_shadow_intake.py \
 
 Outputs: `reports/live_shadow_first_turn_runs.jsonl` (append-only) and `reports/live_shadow_first_turn_summary.json`. Operator console shows a small **“Live shadow intake active”** caption when a summary was generated in the last 24 hours.
 
-**Live feed adapter contract (Step 213, integration spec):** [`docs/integration/live_feed_adapter_contract.md`](docs/integration/live_feed_adapter_contract.md) defines the **read-only** handoff for live seller-support tickets into shadow intake. **File-based pilot** (preferred): append or snapshot JSONL to `data/private/live_vendor_tickets.jsonl`. **API mode** (future): read-only `GET /support/live-tickets?updated_after=...&limit=...` — planned for a later integration phase. Contract covers required schema, sender normalization, eligibility rules, dedupe (`room_id` + `first_turn_signature`), and security boundaries. **No send, no execution, no ticket mutation.**
+**Live feed adapter contract (Step 213, integration spec):** [`docs/integration/live_feed_adapter_contract.md`](docs/integration/live_feed_adapter_contract.md) defines the **read-only** handoff for live seller-support tickets into shadow intake. **File-based pilot** (preferred): append or snapshot JSONL to `data/private/live_vendor_tickets.jsonl`. Contract covers required schema, sender normalization, eligibility rules, dedupe (`room_id` + `first_turn_signature`), and security boundaries. **No send, no execution, no ticket mutation.**
+
+**Live Rooms API adapter v1 (Step 217, local/private dev):** Fetches read-only from `https://app.inchand.com/api/v1/internal/rooms` (`LIVE_ROOMS_API_URL`), normalizes to the Step 213 contract, and writes **full raw message text** (no redaction) to gitignored `data/private/` only. Token via `LIVE_ROOMS_API_TOKEN` env only. Does **not** run LangGraph, send replies, or mutate tickets.
+
+```bash
+export LIVE_ROOMS_API_TOKEN=...
+
+PYTHONPATH=. python3.11 scripts/fetch_live_rooms_api.py \
+  --limit 400 \
+  --overwrite \
+  --validate
+```
+
+Outputs: `data/private/live_rooms_raw.json`, `data/private/live_vendor_tickets.jsonl`; with `--validate`, `reports/live_feed_contract_validation_summary.json` and `reports/live_feed_contract_validation_report.md` (aggregate only). Code: `app/live_shadow/live_rooms_api_client.py`, `app/live_shadow/live_rooms_adapter.py`.
+
+**Live tickets dashboard intake (Step 218, operator console):** Sidebar **Data source** → **Live API feed** loads `data/private/live_vendor_tickets.jsonl` (newest `updated_at` first). **Manual refresh only** — no polling or websocket. Use **Fetch latest tickets from API** (FA «دریافت تیکت‌های جدید از API») to pull the latest rooms from the Inchand API, write normalized JSONL, validate, and reload the feed in one step; **Reload feed** (FA «بارگذاری مجدد») re-reads the local JSONL only. Lists all tickets with eligible/skipped badges; eligible = seller-first, open, no support reply yet. **Sidebar filters:** `ticket_label`, eligibility reason, first sender (persisted in session). **FA mode** shows Jalali timestamps (`YYYY/MM/DD HH:MM`); EN stays Gregorian. Default API fetch size: **400** tickets. Operator-assisted drafts run **only when the operator clicks** Run/Refresh assisted package (session-only; OpenAI + knowledge hints if enabled). **No send, no execution, no ticket mutation.** Live feed session state is isolated from historical replay. Code: `app/live_shadow/live_rooms_fetch_service.py`, `app/operator_console/live_feed_fetch_handler.py`, `app/operator_console/live_feed_loader.py`, `app/operator_console/datetime_display.py`.
+
+**Fetching live tickets from console**
+
+1. Set `LIVE_ROOMS_API_TOKEN` in `.env` (never commit; token is not shown in the UI).
+2. Optional: `LIVE_ROOMS_API_URL`, `live_rooms_api_fetch_limit` (default **400**).
+3. Run the operator console; sidebar **Data source** → **Live API feed**.
+4. Click **Fetch latest tickets from API** — writes `data/private/live_rooms_raw.json` and `data/private/live_vendor_tickets.jsonl`, runs contract validation reports under `reports/`, reloads the feed, and shows counts. **No auto-polling, no background jobs, no ticket mutation or send.**
+5. Use **Reload feed** if you only changed the JSONL path or edited the file locally.
+
+CLI equivalent (same service):
+
+```bash
+export LIVE_ROOMS_API_TOKEN=...
+
+PYTHONPATH=. python3.11 scripts/fetch_live_rooms_api.py --limit 400 --overwrite --validate
+```
+
+```bash
+PYTHONPATH=. python3.11 scripts/fetch_live_rooms_api.py --limit 400 --overwrite
+
+OPERATOR_AGENTIC_ASSISTED_MODE_ENABLED=true \
+OPERATOR_AGENTIC_ASSISTED_PROVIDER=openai \
+OPERATOR_AGENTIC_ASSISTED_KNOWLEDGE_HINTS_ENABLED=true \
+PYTHONPATH=. python3.11 scripts/run_operator_console.py
+```
+
+**Knowledge OpenAI rebuild + live intake prep (Step 219):** Rebuild operational knowledge from `data/private/knowledge/operations/`, embed with **OpenAI**, re-index **sandbox pgvector only** (`--confirm-sandbox` + `--confirm-real-openai`). Runs retrieval smoke + settlement policy-fact checks. Paginated live API fetch defaults to **400** rooms.
+
+```bash
+export OPENAI_API_KEY=...
+export PGVECTOR_DATABASE_URL=postgresql://inchand:inchand_dev_password@127.0.0.1:5432/inchand_ai
+
+PYTHONPATH=. python3.11 scripts/rebuild_knowledge_openai_index.py \
+  --confirm-real-openai --confirm-sandbox --overwrite
+
+PYTHONPATH=. python3.11 scripts/fetch_live_rooms_api.py --limit 400 --overwrite --validate
+```
+
+Reports: `reports/knowledge_openai_rebuild_summary.json`, `reports/knowledge_retrieval_smoke_summary.json`, `reports/policy_fact_extraction_check_summary.json`.
+
+**Lightweight final draft reflection (Step 221A, draft-only):** After draft generation and existing calibrations (operational sufficiency, policy grounding, product wording, panel issue), a **single-pass** operational reviewer runs on the **final draft only** — not a multi-agent loop, not autonomous planning, and not chain-of-thought exposure. Flow: `draft_generator → final_draft_reflection_review → optional_lightweight_rewrite → final_safe_draft`. At most **one review pass** and **one rewrite pass**; no recursion or auto-send.
+
+Module: `app/agentic_sandbox/final_draft_reflection.py`. Deterministic rules run first (repeated identifier asks, over-questioning, unsupported claims, policy grounding gaps, forbidden wording, unnecessary photo/panel requests, missing operational acknowledgments). Optional `openai_hybrid` supplements **only** uncertain medium-confidence findings when `draft_provider=openai`.
+
+```bash
+# Defaults: enabled, rule_based provider
+export FINAL_DRAFT_REFLECTION_ENABLED=true
+export FINAL_DRAFT_REFLECTION_PROVIDER=rule_based   # disabled | rule_based | openai_hybrid
+export FINAL_DRAFT_REFLECTION_OPENAI_MODEL=gpt-4o-mini
+export FINAL_DRAFT_REFLECTION_MAX_REWRITE_CHARS=700
+```
+
+Operator console **Technical details** expander shows safe metadata only: reflection reviewed, rewrite applied, issue types (no hidden reasoning). Eval helper (raw vs reflected on JSONL sample):
+
+```bash
+PYTHONPATH=. python3.11 scripts/evaluate_reflection_delta.py \
+  reports/live_first_turn_shadow_intake.jsonl \
+  --output reports/reflection_delta_summary.json
+```
+
+**OpenAI multi-turn baseline freeze (Step 228, behavioral contract):** Freeze a **trusted OpenAI-backed reference** for the full multi-turn eval pack (reflection, cancellation/delivery/settlement routing, closed-ticket gating, photo gating, etc.) so future prompt/routing/model/RAG experiments can be compared for regressions. **Not** a new feature, prompt rewrite, or production deploy — baseline preservation only.
+
+Stored per scenario under `data/evals/golden_outputs/openai_baseline/`: normalized draft **fingerprints** (SHA-256), intent, suggested action, reflection flags, gating metadata, and safe manifest fields (provider, model, timestamps, feature flags). **Never** raw prompts, chain-of-thought, transcripts, embeddings, or API keys. Draft normalization (`normalize_baseline_draft_text`) trims whitespace, normalizes Persian punctuation/digits, collapses repeated dots, and lowercases safe ASCII fragments to avoid cosmetic fingerprint drift.
+
+**CI:** mock multi-turn eval remains CI-safe (`scripts/run_multi_turn_eval_suite.py --provider mock`). OpenAI baseline **freeze/compare is manual or nightly only** — no OpenAI dependency in `make ci`.
+
+```bash
+# Freeze (writes baseline; requires explicit flags)
+PYTHONPATH=. python3.11 scripts/freeze_openai_multi_turn_baseline.py \
+  --confirm-real-openai \
+  --enable-knowledge-hints \
+  --update-baseline \
+  --overwrite
+
+# Compare current behavior against frozen baseline (read-only)
+PYTHONPATH=. python3.11 scripts/compare_openai_baseline.py \
+  --provider openai \
+  --enable-knowledge-hints \
+  --confirm-real-openai \
+  --overwrite
+```
+
+Drift classes: **acceptable** (cosmetic draft fingerprint only), **review_required** (intent/action/reflection/policy metadata changed), **critical_regression** (eval pass→fail, closed-ticket gating break, critical scenario regressions). Reflection aggregates (rewrite rate, issue-type distribution, save rate) are frozen in `manifest.json` to catch silent reflection degradation. Without `--update-baseline`, baseline files cannot be overwritten.
+
+Module: `app/evals/openai_multi_turn_baseline.py`. Docs: `docs/operations/openai_multi_turn_baseline_freeze.md`. Reports: `reports/openai_baseline_freeze_*`, `reports/openai_baseline_compare_*`.
+
+**Iran Post tracking verification (Step 229, read-only tool):** Manual/HITL-only adapter for Ayantech `PostTrackingInquiry` — verifies Iran Post tracking codes without updating orders, tickets, or sending messages. Token from `IRAN_POST_TRACKING_TOKEN` env only (never hardcoded). Ayantech expects the code in **`PackageNumber`** (`IRAN_POST_TRACKING_CODE_FIELD=PackageNumber` default). Event `ExtraInfo` JSON is parsed to `شرح` only (mail carrier names excluded from safe UI). Raw API bodies only under `data/private/` when explicitly requested.
+
+```bash
+export IRAN_POST_TRACKING_ENABLED=true
+export IRAN_POST_TRACKING_TOKEN=...
+
+PYTHONPATH=. python3.11 scripts/verify_iran_post_tracking.py \
+  --tracking-code 195370506501166594474111 \
+  --debug-extraction \
+  --overwrite
+```
+
+Operator console (assisted mode / manual sandbox): when a plausible Iran Post code is present, section **Tracking verification** / «استعلام کد رهگیری» with button «استعلام از پست ایران» — **manual click only**, session-only result, advisory caption (not auto-sent to seller). Multi-turn metadata may set `tracking_verification_recommended=true` when tracking was requested and fulfilled; **graph does not auto-call the API**. Not in `make ci` (mock HTTP in tests).
+
+Module: `app/tools/tracking/iran_post_tracking.py`. Docs: `docs/integration/iran_post_tracking_api.md`.
+
+**Inchand order lookup (Step 231, read-only tool):** Manual/HITL-only adapter for Inchand internal `GET /orders/{INC-#######}` — fetches safe operational order metadata (statuses, parcel tracking code, delivery flags) without updating orders, tickets, or sending messages. Token from `INCHAND_API_KEY_VALUE` (fallback `LIVE_ROOMS_API_TOKEN`) env only. Raw API bodies only under `data/private/` when explicitly requested.
+
+```bash
+export INCHAND_ORDER_LOOKUP_ENABLED=true
+export INCHAND_API_KEY_VALUE=...
+
+PYTHONPATH=. python3.11 scripts/lookup_inchand_order.py \
+  --order-id 7358954 \
+  --overwrite
+```
+
+Operator console (assisted mode / manual sandbox / live ticket): when an order id is extracted, section **Inchand order lookup** / «اطلاعات سفارش اینچند» with button «دریافت اطلاعات سفارش» — **manual click only**, session-only safe result. Multi-turn metadata may set `inchand_order_lookup_recommended=true` and `inchand_order_id_candidate`; **graph does not auto-call the API**. Not in `make ci` (mock HTTP in tests).
+
+Module: `app/tools/inchand/order_lookup.py`. Docs: `docs/integration/inchand_order_lookup_api.md`.
+
+**Shipment/delivery decision layer (Step 232, read-only):** Combines seller text + optional Inchand order lookup + optional Iran Post verification into a structured operational decision and recommended Persian reply. Manual sandbox shows panel **تصمیم عملیاتی ارسال/تحویل** and may use the decision reply as the AI chat bubble when `should_override_draft=true`. Inchand-delivered orders skip Iran Post verification. No auto tool calls in live/replay; no order/ticket mutation.
+
+```bash
+export SHIPMENT_DELIVERY_DECISION_ENABLED=true
+# Optional manual sandbox only:
+export MANUAL_SANDBOX_AUTO_ORDER_LOOKUP_ENABLED=false
+```
+
+Module: `app/workflows/shipment_delivery_decision.py`. Docs: `docs/integration/shipment_delivery_decision.md`.
+
+**Controlled manual sandbox auto orchestration (Step 233):** When `MANUAL_SANDBOX_AUTO_ORDER_LOOKUP_ENABLED=true` (and Inchand lookup enabled), **Manual sandbox chat only** auto-fetches safe order metadata once per `INC-#######` (session cache), runs the shipment/delivery decision layer, and may chain Iran Post auto-verify (`MANUAL_SANDBOX_AUTO_TRACKING_VERIFY_ENABLED`) for grounded replies. Delivery-completed seller messages with no parcel tracking get a delivery ack only — never an optional tracking ask. Live feed and historical replay never auto-lookup or auto-verify. No order mutation, no send.
+
+**Operational actions registry (Step 234):** Central catalog of read-only operational tools (`inchand_order_lookup`, `iran_post_tracking_verification`) with execution modes, risk levels, eligibility rules, and safe-output policies. Manual sandbox auto orchestration and operator tool panels consult `app/tools/operational_actions_registry.py`. Live API feed allows **manual** tool buttons only; auto execution remains sandbox-only. No new external tools, no production automation. Docs: `docs/architecture/operational_actions_registry.md`.
+
+**Controlled read-only graph tool execution (Step 235):** Agentic graph now runs a gated read-only tool chain (`plan_read_only_tools` → `execute_order_lookup` → `shipment_delivery_decision` → optional `execute_iran_post_tracking` → `grounded_reply`) **only** when `source_mode=manual_sandbox_chat` and `AGENTIC_GRAPH_READ_ONLY_TOOLS_ENABLED=true`. Eligibility is enforced through `evaluate_tool_eligibility()` and live/replay auto execution remains blocked. LLM draft generation still runs for debug/comparison, but protected grounded decision replies override final draft when `should_override_draft=true`. Safe metadata is exposed in assisted details/reports (`planned_tools`, `executed_tools`, `blocked_tools`, `shipment_delivery_decision_type`, `tool_grounded_reply_used`) without raw API payloads, tokens, or PII. Workflow diagram: `docs/architecture/agentic_graph_read_only_tools_workflow.svg`.
+
+**Multi-order shipment/delivery batch handling (Step 236):** In manual sandbox graph mode, shipment/delivery messages with multiple order IDs are handled as a read-only batch with per-order lookup/decision and compact aggregate reply. Key guardrails: no mutation/send/live auto execution, registry eligibility per lookup, no PII in panel/report output. New controls: `MULTI_ORDER_BATCH_ENABLED`, `MULTI_ORDER_BATCH_MAX_AUTO_LOOKUP` (default `5`), and `MULTI_ORDER_BATCH_MAX_REPLY_ITEMS` (default `5`). Over-limit batches return a compact registration reply and mark `batch_limit_exceeded=true` in debug metadata.
+
+**Runtime identifier sufficiency rule (platform):** If runtime/operator context already has seller/shop identity (for example `shop_id` in room metadata or manual sandbox context), drafts must not ask sellers for `شناسه فروشگاه` / `shop id` / `شناسه فروشنده`; reflection rewrites these unnecessary asks to a concise registered acknowledgment.
+
+**Manual sandbox auto Iran Post tracking verification (Step 230, local-only):** When **Manual sandbox chat** receives a **seller** message containing a plausible Iran Post tracking code, Inchand will (optionally) auto-verify it via the Iran Post/Ayantech tool, show a safe result panel below the chat, and append a tracking-aware AI support bubble. This is strictly local sandbox behavior: it never auto-verifies in Live API feed or Historical replay, and it performs no ticket/order mutation or message sending.
+
+Enable locally with:
+
+```bash
+export MANUAL_SANDBOX_AUTO_TRACKING_VERIFY_ENABLED=true
+```
 
 **Internal pilot PII policy:** `ALLOW_RAW_PII_INTERNAL_PILOT=true` (default) allows raw phone, IBAN, email, and card values **in feed inputs** so operators can validate entity extraction and review identifiers internally. Validation records these as **informational only** (`raw_identifiers_detected` — allowed in internal pilot mode). **Secrets still fail** (API keys, JWTs, session cookies). Future production feeds may set `ALLOW_RAW_PII_INTERNAL_PILOT=false` for strict redaction. Governance reports remain aggregate-only (no message bodies).
 

@@ -116,9 +116,18 @@ def resolve_effective_draft_style(
     from app.evals.draft_completion_calibration import is_informational_question
     from app.knowledge.policy_fact_extraction import (
         is_settlement_account_operational_request,
+        is_settlement_bank_policy_question,
         is_settlement_timing_policy_question,
     )
     from app.workflows.vendor_ticket_intent_detection import VendorTicketIntent
+
+    if is_settlement_bank_policy_question(
+        seller_text,
+        detected_intent=detected_intent,
+        conceptual_intent_fa=conceptual_intent_fa,
+        suggested_action=suggested_action,
+    ):
+        return DRAFT_STYLE_POLICY_EXPLANATION
 
     if is_settlement_account_operational_request(
         seller_text,
@@ -134,7 +143,12 @@ def resolve_effective_draft_style(
 
     intent = (detected_intent or "").strip().lower()
     if intent == VendorTicketIntent.SETTLEMENT_STATUS_INQUIRY.value:
-        if is_settlement_timing_policy_question(
+        if is_settlement_bank_policy_question(
+            seller_text,
+            detected_intent=detected_intent,
+            conceptual_intent_fa=conceptual_intent_fa,
+            suggested_action=suggested_action,
+        ) or is_settlement_timing_policy_question(
             seller_text,
             detected_intent=detected_intent,
             conceptual_intent_fa=conceptual_intent_fa,
@@ -150,11 +164,19 @@ def resolve_effective_draft_style(
         return DRAFT_STYLE_POLICY_EXPLANATION
 
     if is_informational_question(seller_text, detected_intent=detected_intent):
-        if "تسویه" in seller_text and not is_settlement_timing_policy_question(
-            seller_text,
-            detected_intent=detected_intent,
-            conceptual_intent_fa=conceptual_intent_fa,
-            suggested_action=suggested_action,
+        if "تسویه" in seller_text and not (
+            is_settlement_bank_policy_question(
+                seller_text,
+                detected_intent=detected_intent,
+                conceptual_intent_fa=conceptual_intent_fa,
+                suggested_action=suggested_action,
+            )
+            or is_settlement_timing_policy_question(
+                seller_text,
+                detected_intent=detected_intent,
+                conceptual_intent_fa=conceptual_intent_fa,
+                suggested_action=suggested_action,
+            )
         ):
             return base_style
         return DRAFT_STYLE_POLICY_EXPLANATION

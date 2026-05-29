@@ -17,6 +17,34 @@ class AgenticSandboxState(TypedDict):
     entity_extraction_source: NotRequired[str]
     entity_extraction_source_char_count: NotRequired[int]
     display_preview_char_count: NotRequired[int]
+    shop_id: NotRequired[str | None]
+    seller_id: NotRequired[str | None]
+    shop_name: NotRequired[str | None]
+    shop_identity_available: NotRequired[bool]
+    source_mode: NotRequired[str]
+    graph_tools_enabled: NotRequired[bool]
+    graph_tool_execution_mode: NotRequired[str | None]
+    graph_tool_results: NotRequired[dict[str, Any]]
+    graph_tool_metadata: NotRequired[dict[str, Any]]
+    graph_tool_errors: NotRequired[list[str]]
+    order_lookup_result: NotRequired[dict[str, Any] | None]
+    multi_order_ids: NotRequired[list[str]]
+    multi_order_lookup_results: NotRequired[dict[str, dict[str, Any]]]
+    multi_order_decision: NotRequired[dict[str, Any] | None]
+    multi_order_summary: NotRequired[dict[str, Any] | None]
+    multi_order_batch_enabled: NotRequired[bool]
+    multi_order_batch_count: NotRequired[int]
+    multi_order_batch_limit_exceeded: NotRequired[bool]
+    multi_order_decision_type: NotRequired[str | None]
+    multi_order_reply_used: NotRequired[bool]
+    iran_post_tracking_result: NotRequired[dict[str, Any] | None]
+    shipment_delivery_decision: NotRequired[dict[str, Any] | None]
+    shipment_delivery_decision_type: NotRequired[str | None]
+    decision_used_order_lookup_result: NotRequired[bool]
+    order_lookup_result_source: NotRequired[str]
+    order_lookup_auto_triggered: NotRequired[bool]
+    grounded_decision_reply: NotRequired[str | None]
+    tool_grounded_reply_used: NotRequired[bool]
     detected_intent: str | None
     conceptual_intent_fa: str | None
     extracted_entities: dict[str, Any]
@@ -30,6 +58,12 @@ class AgenticSandboxState(TypedDict):
     draft_provider: NotRequired[str | None]
     openai_draft_metrics: NotRequired[dict[str, Any] | None]
     operational_sufficiency_metrics: NotRequired[dict[str, Any] | None]
+    final_draft_reflection_metrics: NotRequired[dict[str, Any] | None]
+    final_draft_reflection_comparison: NotRequired[dict[str, Any] | None]
+    multi_turn_context_metadata: NotRequired[dict[str, Any] | None]
+    multi_turn_active: NotRequired[bool]
+    response_target_seller_text: NotRequired[str]
+    multi_turn_extraction_text: NotRequired[str]
     safety_status: str | None
     human_review_required: bool
     execution_allowed: bool
@@ -58,6 +92,12 @@ def initial_agentic_sandbox_state(
     llm_model: str = "mock-vendor-ticket-drafter",
     generate_fn: Any | None = None,
     knowledge_hints_enabled: bool = False,
+    shop_id: str | None = None,
+    seller_id: str | None = None,
+    shop_name: str | None = None,
+    shop_identity_available: bool = False,
+    source_mode: str = "historical_replay",
+    graph_tools_enabled: bool = False,
 ) -> AgenticSandboxState:
     """Build a safe initial state with execution/send disabled."""
     return {
@@ -74,6 +114,34 @@ def initial_agentic_sandbox_state(
         "entity_extraction_source": entity_extraction_source,
         "entity_extraction_source_char_count": entity_extraction_source_char_count,
         "display_preview_char_count": display_preview_char_count,
+        "shop_id": (shop_id.strip() if shop_id else None),
+        "seller_id": (seller_id.strip() if seller_id else None),
+        "shop_name": (shop_name.strip() if shop_name else None),
+        "shop_identity_available": bool(shop_identity_available),
+        "source_mode": source_mode,
+        "graph_tools_enabled": graph_tools_enabled,
+        "graph_tool_execution_mode": None,
+        "graph_tool_results": {},
+        "graph_tool_metadata": {},
+        "graph_tool_errors": [],
+        "order_lookup_result": None,
+        "multi_order_ids": [],
+        "multi_order_lookup_results": {},
+        "multi_order_decision": None,
+        "multi_order_summary": None,
+        "multi_order_batch_enabled": False,
+        "multi_order_batch_count": 0,
+        "multi_order_batch_limit_exceeded": False,
+        "multi_order_decision_type": None,
+        "multi_order_reply_used": False,
+        "iran_post_tracking_result": None,
+        "shipment_delivery_decision": None,
+        "shipment_delivery_decision_type": None,
+        "decision_used_order_lookup_result": False,
+        "order_lookup_result_source": "none",
+        "order_lookup_auto_triggered": False,
+        "grounded_decision_reply": None,
+        "tool_grounded_reply_used": False,
         "detected_intent": None,
         "conceptual_intent_fa": None,
         "extracted_entities": {},

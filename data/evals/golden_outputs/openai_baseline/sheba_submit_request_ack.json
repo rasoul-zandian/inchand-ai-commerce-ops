@@ -1,0 +1,14 @@
+{
+  "scenario_id": "sheba_submit_request_ack",
+  "draft_fingerprint": "5f2858d1e3a7ecb8301cf8ee76f7a7b0d238e3275b75683e6cbf754a711ec9ac",
+  "detected_intent": "seller_operational_request",
+  "suggested_action": "billing_review",
+  "reflection_rewrite_applied": false,
+  "should_generate_draft": null,
+  "policy_question_type": "none",
+  "reflection_issue_types": [],
+  "graph_status": "ok",
+  "eval_passed": true,
+  "skip_reason": null,
+  "updated_at_utc": "2026-05-26T14:04:21+00:00"
+}

@@ -56,6 +56,13 @@ def test_non_seller_message_returns_undetected() -> None:
     assert result.seller_intent is None
 
 
+def test_cancellation_not_classified_as_seller_notification() -> None:
+    result = detect_seller_notification("سفارش 7367917 لغو شود")
+    assert result.is_detected is False
+    assert result.seller_intent is None
+    assert "cancellation_request_preempts_notification" in result.reasons
+
+
 def test_operational_request_order_status_review() -> None:
     result = detect_seller_notification("لطفاً وضعیت سفارش 1234567 را بررسی کنید")
     assert result.is_seller_operational_request is True

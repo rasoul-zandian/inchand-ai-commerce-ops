@@ -298,6 +298,39 @@ Outputs:
 
 Implementation: `app/live_shadow/live_feed_contract.py`.
 
+## Live Rooms API adapter (Step 217, local/private dev)
+
+Read-only fetch from Inchand internal rooms API, normalized to this contract **without message redaction** (full raw text for local debugging/validation only).
+
+| Item | Value |
+|------|--------|
+| Endpoint | `https://app.inchand.com/api/v1/internal/rooms` (`LIVE_ROOMS_API_URL`) |
+| Auth | `LIVE_ROOMS_API_TOKEN` env → `Authorization: Bearer …` (optional) |
+| Raw archive | `data/private/live_rooms_raw.json` |
+| Normalized JSONL | `data/private/live_vendor_tickets.jsonl` |
+| `source_system` | `inchand_internal_rooms_api` |
+
+**Mapping (API → contract):** `id` → `room_id`; `category` → `ticket_label`; `shop_id` → `shop_id`; `messages[].type` → `sender_type`; `messages[].content` → `text` (verbatim). Sender aliases match contract normalization (`admin`/`support`/`operator` → `support_agent`, `vendor` → `seller`, etc.). Missing timestamps use UTC fallback with `timestamp_fallback_used` / `timestamp_fallback_reason`; missing `status` defaults to `open` with `status_fallback_used`.
+
+**Boundaries:** read-only GET; no send, no ticket/order mutation, no automatic LangGraph run, no PII masking in this step. Outputs stay under `data/private/` (gitignored). Validation reports under `reports/` contain counts/errors only — not message bodies.
+
+```bash
+export LIVE_ROOMS_API_TOKEN=...
+
+PYTHONPATH=. python3.11 scripts/fetch_live_rooms_api.py \
+  --limit 400 \
+  --overwrite \
+  --validate
+```
+
+Code: `app/live_shadow/live_rooms_api_client.py`, `app/live_shadow/live_rooms_adapter.py`, `app/live_shadow/live_rooms_fetch_service.py`, `scripts/fetch_live_rooms_api.py`.
+
+**Operator console:** Sidebar **Data source** → **Live API feed** → **Fetch latest tickets from API** (FA «دریافت تیکت‌های جدید از API») runs the same service in-process (no polling, no mutation). Requires `LIVE_ROOMS_API_TOKEN` in `.env`; token is never shown in the UI.
+
+## Operator dashboard intake (Step 218)
+
+Operator console sidebar **Live API feed** reads the normalized JSONL (manual **Reload feed** only; no auto-polling). Default fetch: **400** rooms (`LIVE_ROOMS_API_FETCH_LIMIT` / `--limit 400`). Tickets sort **newest first** (`updated_at`, else `created_at`). Sidebar filters: `ticket_label`, eligibility (`eligible`, skip reasons), `first_sender` — persisted in session. **FA UI:** Jalali timestamps via `app/operator_console/datetime_display.py`. Eligible rows: seller-first, open, no support reply; skipped reasons include `support_replied`, `support_started`, `closed_ticket`, `empty_first_turn`, `malformed_ticket`. Assisted drafts are **operator-triggered** and session-only. Code: `app/operator_console/live_feed_loader.py`, `app/operator_console/streamlit_app.py`.
+
 ## Related components
 
 | Component | Role |

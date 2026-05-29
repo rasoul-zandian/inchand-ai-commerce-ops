@@ -1,0 +1,14 @@
+{
+  "scenario_id": "complaint_escalation_ack",
+  "draft_fingerprint": "697dfc0c5d7e17b01948f3218b8308c7e309c695e3fd32c40bfb23203eececd8",
+  "detected_intent": "complaint_escalation",
+  "suggested_action": "escalate",
+  "reflection_rewrite_applied": false,
+  "should_generate_draft": null,
+  "policy_question_type": "none",
+  "reflection_issue_types": [],
+  "graph_status": "ok",
+  "eval_passed": true,
+  "skip_reason": null,
+  "updated_at_utc": "2026-05-26T14:04:21+00:00"
+}

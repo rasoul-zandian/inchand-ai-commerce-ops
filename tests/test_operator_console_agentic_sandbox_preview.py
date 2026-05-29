@@ -21,8 +21,12 @@ from app.operator_console.agentic_sandbox_preview import (
     store_session_agentic_preview,
     strip_internal_agentic_preview_state,
 )
+from app.operator_console.assisted_ticket_input_builder import (
+    build_operator_ticket_from_manual_chat,
+)
 from app.operator_console.console_models import OperatorTicket
 from app.operator_console.knowledge_hints import KnowledgeHint
+from app.operator_console.manual_chat_models import ManualChatMessage
 
 
 def _ticket(*, room_id: str = "7743", preview: str = "لطفاً تسویه را بررسی کنید") -> OperatorTicket:
@@ -206,6 +210,41 @@ def test_session_safe_result_contains_node_statuses() -> None:
     joined = "\n".join(lines)
     assert "detect_intent" in joined
     assert "settlement_rules" in joined
+
+
+def test_closed_ticket_preview_skips_graph_and_draft() -> None:
+    settings = AppSettings(
+        multi_turn_context_enabled=True,
+        operator_agentic_sandbox_provider="mock",
+    )
+    messages = [
+        ManualChatMessage(
+            message_id="m1",
+            sender_type="seller",
+            text="وضعیت سفارش چیست؟",
+            created_at="2026-05-20T12:00:00Z",
+        ),
+    ]
+    ticket, snapshot = build_operator_ticket_from_manual_chat(
+        messages,
+        room_id="closed-room",
+        status="closed",
+    )
+    with patch(
+        "app.agentic_sandbox.agentic_graph.run_agentic_sandbox_workflow",
+    ) as run_graph:
+        preview = run_agentic_preview_for_ticket(
+            ticket,
+            settings=settings,
+            conversation_snapshot=snapshot,
+            source_mode="manual_sandbox_chat",
+        )
+    run_graph.assert_not_called()
+    assert preview.multi_turn_should_generate_draft is False
+    assert preview.multi_turn_skip_reason == "closed_ticket"
+    assert preview.draft_reply is None
+    assert preview.graph_status == "skipped"
+    assert preview.draft_char_count == 0
 
 
 def test_run_preview_uses_graph_without_persisting() -> None:

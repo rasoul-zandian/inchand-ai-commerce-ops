@@ -64,6 +64,7 @@ class FirstTurnDraftContext:
     entity_extraction_source: str = ENTITY_SOURCE_ORIGINAL_VENDOR_ISSUE
     entity_extraction_source_char_count: int = 0
     display_preview_char_count: int = 0
+    shop_id: str | None = None
 
 
 def first_turn_text_from_case(case: Mapping[str, Any]) -> str:
@@ -368,6 +369,7 @@ def build_first_turn_draft_context_from_ticket(
         entity_extraction_source=sources.entity_extraction_source,
         entity_extraction_source_char_count=sources.entity_extraction_source_char_count,
         display_preview_char_count=sources.display_preview_char_count,
+        shop_id=ticket.shop_id,
     )
 
 

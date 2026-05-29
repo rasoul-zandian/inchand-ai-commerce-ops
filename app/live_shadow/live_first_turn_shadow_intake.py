@@ -337,10 +337,43 @@ def operator_ticket_from_live_ticket(ticket: LiveVendorTicket) -> OperatorTicket
     snapshot = ticket.snapshot
     open_snap = build_open_ticket_snapshot(snapshot)
     full_first = extract_full_first_vendor_message(snapshot)
+    shop_id: str | None = None
+    seller_id: str | None = None
+    shop_name: str | None = None
+    shop_identity_available: bool | None = None
+    if ticket.raw_payload and isinstance(ticket.raw_payload, dict):
+        raw_shop = ticket.raw_payload.get("shop_id")
+        metadata = ticket.raw_payload.get("metadata")
+        if raw_shop is None and isinstance(metadata, dict):
+            raw_shop = metadata.get("shop_id")
+        if raw_shop is not None:
+            shop_id = str(raw_shop).strip() or None
+        raw_seller = ticket.raw_payload.get("seller_id")
+        raw_shop_name = ticket.raw_payload.get("shop_name")
+        if isinstance(metadata, dict):
+            if raw_seller is None:
+                raw_seller = metadata.get("seller_id")
+            if raw_shop_name is None:
+                raw_shop_name = metadata.get("shop_name")
+            if metadata.get("shop_identity_available") is not None:
+                shop_identity_available = bool(metadata.get("shop_identity_available"))
+        if raw_seller is not None:
+            seller_id = str(raw_seller).strip() or None
+        if raw_shop_name is not None:
+            shop_name = str(raw_shop_name).strip() or None
+
     return OperatorTicket(
         room_id=ticket.room_id,
         ticket_label=ticket.ticket_label or snapshot.ticket_label,
         route_label=None,
+        shop_id=shop_id,
+        seller_id=seller_id,
+        shop_name=shop_name,
+        shop_identity_available=(
+            shop_identity_available
+            if shop_identity_available is not None
+            else bool(shop_id or seller_id or shop_name)
+        ),
         assigned_department=ticket.assigned_department,
         review_priority=ticket.review_priority,
         suggested_action=None,

@@ -1,0 +1,14 @@
+{
+  "scenario_id": "cancellation_explicit_request",
+  "draft_fingerprint": "065bc47457a704872e2f7a1a1b36163f7c8475ebb3a32345c09ee6e15fb90563",
+  "detected_intent": "cancellation_request",
+  "suggested_action": "human_followup",
+  "reflection_rewrite_applied": false,
+  "should_generate_draft": null,
+  "policy_question_type": "none",
+  "reflection_issue_types": [],
+  "graph_status": "ok",
+  "eval_passed": true,
+  "skip_reason": null,
+  "updated_at_utc": "2026-05-26T14:04:21+00:00"
+}

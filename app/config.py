@@ -129,6 +129,40 @@ class AppSettings(BaseSettings):
         default="reports/live_feed_checkpoint.json",
         description="Local JSON checkpoint for incremental live feed polling.",
     )
+    live_rooms_api_url: str = Field(
+        default="https://app.inchand.com/api/v1/internal/rooms",
+        description="Read-only Inchand internal live rooms API base URL (local/private dev).",
+    )
+    live_rooms_api_token: str | None = Field(
+        default=None,
+        description="Bearer token for live rooms API (set via LIVE_ROOMS_API_TOKEN env only).",
+    )
+    live_rooms_api_timeout_seconds: int = Field(
+        default=20,
+        ge=1,
+        le=120,
+        description="HTTP timeout for live rooms API requests.",
+    )
+    live_rooms_api_page_size: int = Field(
+        default=100,
+        ge=1,
+        le=500,
+        description="Default per_page/page size for live rooms API pagination.",
+    )
+    live_rooms_api_fetch_limit: int = Field(
+        default=400,
+        ge=1,
+        le=2000,
+        description="Default max rooms to fetch from live rooms API (CLI --limit override).",
+    )
+    live_rooms_raw_output_path: str = Field(
+        default="data/private/live_rooms_raw.json",
+        description="Local archive path for raw live rooms API response (gitignored).",
+    )
+    live_rooms_normalized_output_path: str = Field(
+        default="data/private/live_vendor_tickets.jsonl",
+        description="Normalized live feed JSONL from live rooms API (gitignored).",
+    )
     allow_raw_pii_internal_pilot: bool = Field(
         default=True,
         description=(
@@ -313,6 +347,176 @@ class AppSettings(BaseSettings):
         le=1000,
         description="Hard max characters for policy_explanation drafts.",
     )
+    final_draft_reflection_enabled: bool = Field(
+        default=True,
+        description=(
+            "When true, run a single-pass operational reflection review on the final "
+            "draft before operator display (HITL-only)."
+        ),
+    )
+    final_draft_reflection_provider: str = Field(
+        default="rule_based",
+        description=(
+            "Final draft reflection mode: disabled, rule_based (default), or openai_hybrid."
+        ),
+    )
+    final_draft_reflection_openai_model: str = Field(
+        default="gpt-4o-mini",
+        description="OpenAI model for optional hybrid reflection reviewer.",
+    )
+    final_draft_reflection_max_rewrite_chars: int = Field(
+        default=700,
+        ge=200,
+        le=1200,
+        description="Hard max characters after reflection rewrite.",
+    )
+    multi_turn_context_enabled: bool = Field(
+        default=False,
+        description=(
+            "When true, build operational multi-turn context from recent ticket messages "
+            "for assisted draft generation (HITL-only)."
+        ),
+    )
+    multi_turn_context_max_messages: int = Field(
+        default=6,
+        ge=2,
+        le=20,
+        description="Max meaningful messages in multi-turn context window.",
+    )
+    iran_post_tracking_enabled: bool = Field(
+        default=False,
+        description=(
+            "When true, manual Iran Post tracking verification may call Ayantech Core API "
+            "(operator/CLI only; never auto-called from graph)."
+        ),
+    )
+    iran_post_tracking_api_url: str = Field(
+        default=("https://core.inquiry.ayantech.ir/webservices/Core.svc/PostTrackingInquiry"),
+        description="Ayantech PostTrackingInquiry endpoint URL.",
+    )
+    iran_post_tracking_token: str | None = Field(
+        default=None,
+        description="Ayantech API token (IRAN_POST_TRACKING_TOKEN env only; never commit).",
+        repr=False,
+    )
+    iran_post_tracking_timeout_seconds: int = Field(
+        default=20,
+        ge=1,
+        le=120,
+        description="HTTP timeout for Iran Post tracking API requests.",
+    )
+    iran_post_tracking_method: str = Field(
+        default="POST",
+        description="HTTP method for Iran Post tracking API (POST only supported).",
+    )
+    iran_post_tracking_provider: str = Field(
+        default="ayantech",
+        description="Tracking verification provider label (ayantech).",
+    )
+    iran_post_tracking_log_raw: bool = Field(
+        default=False,
+        description=(
+            "When true, log safe aggregate fields from Iran Post API responses at INFO "
+            "(never full raw bodies in reports)."
+        ),
+    )
+    manual_sandbox_auto_tracking_verify_enabled: bool = Field(
+        default=False,
+        description=(
+            "When true with Iran Post tracking enabled and token set, manual sandbox chat "
+            "auto-verifies plausible seller tracking codes (manual_sandbox_chat only)."
+        ),
+    )
+    iran_post_tracking_code_field: str = Field(
+        default="PackageNumber",
+        description=(
+            "Ayantech API field for tracking code: PackageNumber (default), TraceNumber, or both."
+        ),
+    )
+    inchand_api_base_url: str = Field(
+        default="https://app.inchand.com/api/v1/internal",
+        description="Inchand internal API base URL for read-only order lookup.",
+    )
+    inchand_api_key_name: str = Field(
+        default="Authorization",
+        description="HTTP header name for Inchand internal API token (default Authorization).",
+    )
+    inchand_api_key_value: str | None = Field(
+        default=None,
+        description=(
+            "Inchand internal API token (INCHAND_API_KEY_VALUE env only). "
+            "Falls back to LIVE_ROOMS_API_TOKEN when unset."
+        ),
+        repr=False,
+    )
+    inchand_order_lookup_enabled: bool = Field(
+        default=False,
+        description=(
+            "When true, manual Inchand order lookup may call internal orders API "
+            "(operator/CLI only; never auto-called from graph)."
+        ),
+    )
+    inchand_order_lookup_timeout_seconds: int = Field(
+        default=20,
+        ge=1,
+        le=120,
+        description="HTTP timeout for Inchand order lookup API requests.",
+    )
+    manual_sandbox_auto_order_lookup_enabled: bool = Field(
+        default=False,
+        description=(
+            "When true with order lookup enabled, manual sandbox may auto-fetch Inchand "
+            "order details on seller turns (manual_sandbox_chat only)."
+        ),
+    )
+    shipment_delivery_decision_enabled: bool = Field(
+        default=True,
+        description=(
+            "When true, compute read-only shipment/delivery operational decisions "
+            "(manual sandbox first; no auto execution in live/replay)."
+        ),
+    )
+    agentic_graph_read_only_tools_enabled: bool = Field(
+        default=False,
+        description=(
+            "When true, agentic graph may execute read-only operational tools in allowed "
+            "source modes (sandbox-first; no live auto execution)."
+        ),
+    )
+    agentic_graph_tool_execution_source_modes: str = Field(
+        default="manual_sandbox_chat",
+        description=(
+            "Comma-separated source modes allowed for graph read-only tool execution. "
+            "Default manual_sandbox_chat."
+        ),
+    )
+    agentic_graph_order_lookup_enabled: bool = Field(
+        default=True,
+        description="Enable Inchand order lookup node inside agentic graph when tools enabled.",
+    )
+    agentic_graph_iran_post_verify_enabled: bool = Field(
+        default=True,
+        description="Enable Iran Post verification node inside agentic graph when tools enabled.",
+    )
+    multi_order_batch_enabled: bool = Field(
+        default=True,
+        description=(
+            "Enable multi-order shipment/delivery batch handling in manual sandbox graph path "
+            "(read-only lookup + aggregate decision)."
+        ),
+    )
+    multi_order_batch_max_auto_lookup: int = Field(
+        default=5,
+        ge=2,
+        le=20,
+        description="Maximum order IDs for automatic per-order lookup in multi-order batch mode.",
+    )
+    multi_order_batch_max_reply_items: int = Field(
+        default=5,
+        ge=1,
+        le=20,
+        description="Maximum per-order items included in aggregate reply/debug output.",
+    )
 
     @field_validator("review_action_adapter", mode="before")
     @classmethod
@@ -329,6 +533,37 @@ class AppSettings(BaseSettings):
         if isinstance(value, str) and not value.strip():
             return None
         return value
+
+    @field_validator("iran_post_tracking_token", mode="before")
+    @classmethod
+    def _empty_iran_post_token_to_none(cls, value: Any) -> Any:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @field_validator("inchand_api_key_value", mode="before")
+    @classmethod
+    def _empty_inchand_api_key_to_none(cls, value: Any) -> Any:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @field_validator("iran_post_tracking_code_field", mode="before")
+    @classmethod
+    def _normalize_iran_post_tracking_code_field(cls, value: Any) -> str:
+        if value is None:
+            return "PackageNumber"
+        normalized = str(value).strip().lower().replace("_", "").replace(" ", "")
+        if normalized in {"tracenumber", "trace"}:
+            return "TraceNumber"
+        if normalized in {"packagenumber", "package"}:
+            return "PackageNumber"
+        if normalized == "both":
+            return "both"
+        raise ValueError(
+            f"Invalid IRAN_POST_TRACKING_CODE_FIELD {value!r}; "
+            "allowed: TraceNumber, PackageNumber, both"
+        )
 
     @field_validator("rag_profile", mode="before")
     @classmethod

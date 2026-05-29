@@ -1,0 +1,1042 @@
+{
+  "version": 1,
+  "description": "Curated multi-turn operational QA scenarios (synthetic only; no live customer data).",
+  "scenarios": [
+    {
+      "scenario_id": "tracking_fulfilled_after_support_request",
+      "title": "Tracking code provided after support request",
+      "category": "tracking_fulfillment",
+      "ticket_label": "shipment",
+      "messages": [
+        {
+          "sender_type": "support_agent",
+          "text": "لطفاً کد رهگیری را ارسال کنید"
+        },
+        {
+          "sender_type": "seller",
+          "text": "051800506400081160839102"
+        }
+      ],
+      "expected": {
+        "must_contain": ["کد رهگیری دریافت شد", "دریافت شد"],
+        "must_not_contain": ["کد رهگیری را ارسال کنید", "لطفاً کد رهگیری"],
+        "should_generate_draft": true,
+        "reflection_rewrite_expected": true
+      }
+    },
+    {
+      "scenario_id": "tracking_and_shipping_method_fulfilled",
+      "title": "Tracking and shipping method after dual request",
+      "category": "tracking_fulfillment",
+      "ticket_label": "shipment",
+      "messages": [
+        {
+          "sender_type": "support_agent",
+          "text": "لطفاً کد رهگیری و نحوه ارسال را ارسال کنید"
+        },
+        {
+          "sender_type": "seller",
+          "text": "کد رهگیری 123456789012345 و ارسال با پست پیشتاز"
+        }
+      ],
+      "expected": {
+        "must_not_contain": ["کد رهگیری را ارسال کنید", "نحوه ارسال را ارسال"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "order_id_fulfilled_after_support_request",
+      "title": "Order ID provided after support request",
+      "category": "order_id_fulfillment",
+      "ticket_label": "order",
+      "messages": [
+        {
+          "sender_type": "support_agent",
+          "text": "لطفاً شماره سفارش را ارسال کنید"
+        },
+        {
+          "sender_type": "seller",
+          "text": "شماره سفارش 7367917"
+        }
+      ],
+      "expected": {
+        "must_not_contain": ["شماره سفارش را ارسال کنید", "شناسه سفارش را ارسال"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "order_id_in_first_message_no_reask",
+      "title": "Order ID already in seller message",
+      "category": "order_id_fulfillment",
+      "ticket_label": "order",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "وضعیت سفارش 7654321 را بررسی کنید"
+        }
+      ],
+      "expected": {
+        "must_not_contain": ["شماره سفارش را ارسال کنید"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "cancellation_no_reason_ask",
+      "title": "Cancellation request without asking reason",
+      "category": "cancellation",
+      "ticket_label": "order",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "سفارش 7367917 لغو شود"
+        }
+      ],
+      "expected": {
+        "must_contain": ["درخواست لغو سفارش", "ثبت شد"],
+        "must_not_contain": ["دلیل", "توضیح بیشتر", "علت لغو"],
+        "expected_intent": "cancellation_request",
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "cancellation_explicit_request",
+      "title": "Explicit cancellation with order id",
+      "category": "cancellation",
+      "ticket_label": "order",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "درخواست لغو سفارش 8123456"
+        }
+      ],
+      "expected": {
+        "must_not_contain": ["دلیل لغو", "چرا می‌خواهید لغو"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "delivery_completed_ack",
+      "title": "Delivery completed acknowledgment",
+      "category": "delivery_completed",
+      "ticket_label": "order",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "سفارش 7364518 تحویل مشتری شده"
+        }
+      ],
+      "expected": {
+        "must_contain": ["ثبت"],
+        "must_not_contain": ["کد رهگیری را ارسال", "شماره سفارش را ارسال"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "delivery_completed_customer_phone_off",
+      "title": "Delivery completed even when customer phone is off",
+      "category": "delivery_completed",
+      "ticket_label": "order",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "سلام این سفارش تحویل دادم INC-7353428 ولی مشتری گوشیش خاموشه که کد تحویل بزنم"
+        }
+      ],
+      "expected": {
+        "must_contain": ["درخواست تحویل سفارش", "ثبت شد"],
+        "must_not_contain": ["گوشی", "منتظر", "شماره تماس", "کد تحویل", "کد رهگیری"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "delivery_completed_after_support_ask",
+      "title": "Delivery confirmation after support asked",
+      "category": "delivery_completed",
+      "ticket_label": "order",
+      "messages": [
+        {
+          "sender_type": "support_agent",
+          "text": "لطفاً وضعیت تحویل را اعلام کنید"
+        },
+        {
+          "sender_type": "seller",
+          "text": "مرسوله به خریدار تحویل شد سفارش 7364518"
+        }
+      ],
+      "expected": {
+        "must_not_contain": ["کد رهگیری", "شماره سفارش را ارسال"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "shipment_reshipment_ack",
+      "title": "Shipment resent acknowledgment",
+      "category": "shipment_reshipment",
+      "ticket_label": "shipment",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "سفارش 7654321 مجدداً برای مشتری ارسال شد"
+        }
+      ],
+      "expected": {
+        "must_not_contain": ["کد رهگیری را ارسال کنید"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "shipment_with_tracking_no_reask",
+      "title": "Shipment update with tracking present",
+      "category": "shipment_reshipment",
+      "ticket_label": "shipment",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "ارسال شد کد رهگیری 987654321012345678901234"
+        }
+      ],
+      "expected": {
+        "must_not_contain": ["کد رهگیری را ارسال کنید"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "settlement_grounded_policy",
+      "title": "Settlement timing policy grounded answer",
+      "category": "settlement_policy",
+      "ticket_label": "fund",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "بعد از خرید مشتری چند روز بعد میتونم تسویه کنم؟"
+        }
+      ],
+      "expected": {
+        "must_contain": ["۳ روز", "نهایی شدن سفارش"],
+        "must_not_contain": ["بستگی دارد", "به قوانین مراجعه", "شماره شبای صحیح"],
+        "expected_intent": "settlement_status_inquiry",
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "settlement_bank_policy_no_sheba_ask",
+      "title": "Settlement bank policy without Sheba request",
+      "category": "settlement_policy",
+      "ticket_label": "fund",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "برای تسویه حساب شماره حسابی یا شبا باید مربوط به کدام بانک باشد؟"
+        }
+      ],
+      "expected": {
+        "must_contain": ["بانک سامان"],
+        "must_not_contain": ["شماره شبای صحیح خود را ارسال", "شماره شبا را ارسال کنید"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "settlement_bank_policy_alt_phrasing",
+      "title": "Acceptable bank for settlement IBAN",
+      "category": "settlement_policy",
+      "ticket_label": "fund",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "شبای چه بانکی برای تسویه قابل قبول است؟"
+        }
+      ],
+      "expected": {
+        "must_contain": ["بانک سامان"],
+        "must_not_contain": ["شماره شبای صحیح"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "commission_policy_no_order_id_request",
+      "title": "Commission policy question without identifier request",
+      "category": "settlement_policy",
+      "ticket_label": "support",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "سلام وقت بخیر\nکمیسیون فروش چند درصده؟"
+        }
+      ],
+      "expected": {
+        "must_contain": ["کمیسیون"],
+        "must_not_contain": ["شماره سفارش", "کد رهگیری", "شناسه کالا", "شناسه فروشگاه"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "sheba_registration_issue_ack",
+      "title": "Sheba registration failure operational ack",
+      "category": "sheba_registration",
+      "ticket_label": "fund",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "شماره شبام ثبت نمیشه IR120170000000123456789001"
+        }
+      ],
+      "expected": {
+        "must_not_contain": ["۳ روز", "کیف پول", "بانک سامان"],
+        "must_contain": ["شبا"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "sheba_submit_request_ack",
+      "title": "Sheba submit request acknowledgment",
+      "category": "sheba_registration",
+      "ticket_label": "fund",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "لطفا این شماره شبا را ثبت کنید IR120170000000123456789001"
+        }
+      ],
+      "expected": {
+        "must_not_contain": ["بانک سامان", "۳ روز"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "sheba_extracted_no_reask",
+      "title": "Valid IBAN extracted — do not re-ask Sheba",
+      "category": "sheba_registration",
+      "ticket_label": "fund",
+      "messages": [
+        {
+          "sender_type": "support_agent",
+          "text": "لطفاً شماره شبا را ارسال کنید"
+        },
+        {
+          "sender_type": "seller",
+          "text": "شماره شبا IR120170000000123456789001"
+        }
+      ],
+      "expected": {
+        "must_not_contain": ["شماره شبای صحیح خود را ارسال", "شماره شبا را ارسال کنید"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "panel_issue_no_panel_id_request",
+      "title": "Panel closed — nazer review without panel ID ask",
+      "category": "panel_issue",
+      "ticket_label": "panel",
+      "shop_id": "4136",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "پنلم بسته شده"
+        }
+      ],
+      "expected": {
+        "must_not_contain": ["شناسه پنل", "کد پنل", "shop_id"],
+        "must_contain": ["ناظر"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "panel_access_issue_followup",
+      "title": "Panel access issue follow-up",
+      "category": "panel_issue",
+      "ticket_label": "panel",
+      "shop_id": "4136",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "سلام مشکل پنل من حل نشد؟"
+        }
+      ],
+      "expected": {
+        "must_not_contain": ["شناسه پنل", "شناسه فروشگاه"],
+        "must_contain": ["ناظر"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "product_review_ack",
+      "title": "Product approval review acknowledgment",
+      "category": "product_review",
+      "ticket_label": "product",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "شناسه کالا 12345678 برای تایید کالا ارسال شد"
+        }
+      ],
+      "expected": {
+        "must_not_contain": ["شناسه کالا را ارسال", "کد کالا را ارسال"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "product_edit_review",
+      "title": "Product edit under review",
+      "category": "product_review",
+      "ticket_label": "product",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "ویرایش محصول 99887766 در انتظار بررسی است"
+        }
+      ],
+      "expected": {
+        "must_not_contain": ["شناسه کالا را ارسال"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "product_rejection_clarification",
+      "title": "Rejected product clarification",
+      "category": "product_rejection",
+      "ticket_label": "product",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "چرا کالای من رد شده است؟"
+        }
+      ],
+      "expected": {
+        "must_not_contain": ["شناسه کالا را ارسال کنید"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "photo_request_not_needed_delivery",
+      "title": "No photo request for delivery completed",
+      "category": "photo_request_gating",
+      "ticket_label": "order",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "سفارش 7364518 تحویل مشتری شده"
+        }
+      ],
+      "expected": {
+        "must_not_contain": ["عکس", "اسکرین‌شات", "فایل تصویر"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "photo_request_not_needed_cancellation",
+      "title": "No photo request for cancellation",
+      "category": "photo_request_gating",
+      "ticket_label": "order",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "لغو سفارش 7367917"
+        }
+      ],
+      "expected": {
+        "must_not_contain": ["عکس", "اسکرین‌شات"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "latest_support_message_skip",
+      "title": "Skip draft when latest message is support",
+      "category": "latest_support_skip",
+      "ticket_label": "order",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "سلام وضعیت سفارش چیست؟"
+        },
+        {
+          "sender_type": "support_agent",
+          "text": "در حال بررسی است؛ به زودی اطلاع می‌دهیم."
+        }
+      ],
+      "expected": {
+        "should_generate_draft": false
+      }
+    },
+    {
+      "scenario_id": "latest_support_only_thread",
+      "title": "Support-only latest turn skips generation",
+      "category": "latest_support_skip",
+      "ticket_label": "shipment",
+      "messages": [
+        {
+          "sender_type": "support_agent",
+          "text": "لطفاً کد رهگیری را ارسال کنید"
+        }
+      ],
+      "expected": {
+        "should_generate_draft": false
+      }
+    },
+    {
+      "scenario_id": "complaint_escalation_ack",
+      "title": "Complaint escalation acknowledgment",
+      "category": "complaint_escalation",
+      "ticket_label": "complaint",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "شکایت دارم از رفتار پشتیبانی"
+        }
+      ],
+      "expected": {
+        "must_not_contain": ["شناسه سفارش را ارسال"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "complaint_followup",
+      "title": "Complaint follow-up without generic fluff",
+      "category": "complaint_escalation",
+      "ticket_label": "complaint",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "پیگیری شکایت قبلی من"
+        }
+      ],
+      "expected": {
+        "must_not_contain": ["درخواست شما با موفقیت ثبت شد"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "missing_order_id_request",
+      "title": "Request order ID when missing",
+      "category": "missing_identifier",
+      "ticket_label": "order",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "لطفاً وضعیت سفارش من را بررسی کنید"
+        }
+      ],
+      "expected": {
+        "must_contain": ["سفارش"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "missing_tracking_request_shipment",
+      "title": "Request tracking when shipment issue without code",
+      "category": "missing_identifier",
+      "ticket_label": "shipment",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "مرسوله ارسال نشده است"
+        }
+      ],
+      "expected": {
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "repeated_tracking_ask_prevention",
+      "title": "Do not re-ask tracking after fulfillment",
+      "category": "repeated_ask_prevention",
+      "ticket_label": "shipment",
+      "messages": [
+        {
+          "sender_type": "support_agent",
+          "text": "لطفاً کد رهگیری را ارسال کنید"
+        },
+        {
+          "sender_type": "seller",
+          "text": "051800506400081160839102"
+        }
+      ],
+      "expected": {
+        "must_not_contain": ["کد رهگیری را ارسال کنید"],
+        "should_generate_draft": true,
+        "reflection_rewrite_expected": true
+      }
+    },
+    {
+      "scenario_id": "repeated_order_id_ask_prevention",
+      "title": "Do not re-ask order ID after provided",
+      "category": "repeated_ask_prevention",
+      "ticket_label": "order",
+      "messages": [
+        {
+          "sender_type": "support_agent",
+          "text": "لطفاً شماره سفارش را ارسال کنید"
+        },
+        {
+          "sender_type": "seller",
+          "text": "7367917"
+        }
+      ],
+      "expected": {
+        "must_not_contain": ["شماره سفارش را ارسال", "شناسه سفارش را ارسال"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "greeting_requests_details",
+      "title": "Greeting-only seller message",
+      "category": "missing_identifier",
+      "ticket_label": null,
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "سلام وقت بخیر"
+        }
+      ],
+      "expected": {
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "multi_turn_product_id_fulfilled",
+      "title": "Product ID after support request",
+      "category": "order_id_fulfillment",
+      "ticket_label": "product",
+      "messages": [
+        {
+          "sender_type": "support_agent",
+          "text": "لطفاً شناسه کالا را ارسال کنید"
+        },
+        {
+          "sender_type": "seller",
+          "text": "12345678"
+        }
+      ],
+      "expected": {
+        "must_not_contain": ["شناسه کالا را ارسال"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "settlement_operational_not_timing",
+      "title": "Sheba issue must not get timing policy text",
+      "category": "sheba_registration",
+      "ticket_label": "fund",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "شبا ثبت نمی‌شود IR120170000000123456789001"
+        }
+      ],
+      "expected": {
+        "must_not_contain": ["اولین بازه تسویه", "کیف پول"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "closed_ticket_skip",
+      "title": "Closed ticket skips draft generation",
+      "category": "latest_support_skip",
+      "ticket_label": "order",
+      "status": "closed",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "وضعیت سفارش چیست؟"
+        }
+      ],
+      "expected": {
+        "should_generate_draft": false
+      }
+    },
+    {
+      "scenario_id": "delivered_order_skips_iran_post_verification",
+      "title": "Decision: Inchand delivered skips Iran Post",
+      "category": "shipment_delivery_decision",
+      "ticket_label": "shipment",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "سلام سفارش INC-7358954 تحویل شد"
+        }
+      ],
+      "expected": {
+        "must_contain": ["ثبت"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "order_tracking_iran_post_valid",
+      "title": "Decision: valid Iran Post tracking on order",
+      "category": "shipment_delivery_decision",
+      "ticket_label": "shipment",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "وضعیت سفارش INC-7358954"
+        }
+      ],
+      "expected": {
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "order_tracking_iran_post_invalid",
+      "title": "Decision: invalid Iran Post tracking",
+      "category": "shipment_delivery_decision",
+      "ticket_label": "shipment",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "سفارش INC-7358954"
+        }
+      ],
+      "expected": {
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "order_tracking_missing_requests_optional_tracking",
+      "title": "Decision: missing parcel tracking asks optional postal",
+      "category": "shipment_delivery_decision",
+      "ticket_label": "shipment",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "سفارش INC-7358954 ارسال شد"
+        }
+      ],
+      "expected": {
+        "must_contain": ["روش ارسال", "کد رهگیری پستی", "در صورت وجود"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "optional_tracking_request_seller_no_code_ack",
+      "title": "Optional tracking: peyk reply ack only",
+      "category": "shipment_delivery_decision",
+      "ticket_label": "shipment",
+      "messages": [
+        {
+          "sender_type": "support_agent",
+          "text": "لطفاً روش ارسال و کد رهگیری پستی را در صورت وجود ارسال کنید."
+        },
+        {
+          "sender_type": "seller",
+          "text": "با پیک ارسال کردم"
+        }
+      ],
+      "expected": {
+        "must_contain": ["درخواست شما ثبت و در دست بررسی قرار گرفت."],
+        "must_not_contain": ["کد رهگیری را ارسال کنید"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "optional_tracking_request_invalid_post_code",
+      "title": "Optional tracking: invalid Iran Post code",
+      "category": "shipment_delivery_decision",
+      "ticket_label": "shipment",
+      "messages": [
+        {
+          "sender_type": "support_agent",
+          "text": "لطفاً روش ارسال و کد رهگیری پستی را در صورت وجود ارسال کنید."
+        },
+        {
+          "sender_type": "seller",
+          "text": "کد رهگیری 195370506501166594474111"
+        }
+      ],
+      "expected": {
+        "must_contain": ["نامعتبر", "در صورت وجود"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "optional_tracking_request_valid_post_code",
+      "title": "Optional tracking: valid Iran Post code",
+      "category": "shipment_delivery_decision",
+      "ticket_label": "shipment",
+      "messages": [
+        {
+          "sender_type": "support_agent",
+          "text": "لطفاً روش ارسال و کد رهگیری پستی را در صورت وجود ارسال کنید."
+        },
+        {
+          "sender_type": "seller",
+          "text": "کد رهگیری 195370506501166594474111"
+        }
+      ],
+      "expected": {
+        "must_contain": ["کد رهگیری پستی با موفقیت بررسی شد", "درخواست شما ثبت و در دست بررسی قرار گرفت."],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "non_iran_post_tracking_present_ack",
+      "title": "Decision: non Iran Post carrier ack",
+      "category": "shipment_delivery_decision",
+      "ticket_label": "shipment",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "سفارش INC-7358954 با تیپاکس ارسال شد"
+        }
+      ],
+      "expected": {
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "delivered_without_tracking_ack",
+      "title": "Delivery completed: no tracking on order — ack only",
+      "category": "shipment_delivery_decision",
+      "ticket_label": "shipment",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "سفارش INC-7351606 تحویل شد"
+        }
+      ],
+      "expected": {
+        "must_contain": ["درخواست تحویل سفارش شما ثبت شد"],
+        "must_not_contain": ["کد رهگیری پستی", "در صورت وجود"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "shipment_without_tracking_optional_request",
+      "title": "Shipment sent: optional postal tracking ask",
+      "category": "shipment_delivery_decision",
+      "ticket_label": "shipment",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "سفارش INC-7351606 ارسال شد"
+        }
+      ],
+      "expected": {
+        "must_contain": ["روش ارسال", "کد رهگیری پستی", "در صورت وجود"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "shipment_optional_tracking_peyk_ack",
+      "title": "After optional ask: peyk reply ack only",
+      "category": "shipment_delivery_decision",
+      "ticket_label": "shipment",
+      "messages": [
+        {
+          "sender_type": "support_agent",
+          "text": "لطفاً روش ارسال و کد رهگیری پستی را در صورت وجود ارسال کنید."
+        },
+        {
+          "sender_type": "seller",
+          "text": "با پیک ارسال شد"
+        }
+      ],
+      "expected": {
+        "must_contain": ["درخواست شما ثبت و در دست بررسی قرار گرفت."],
+        "must_not_contain": ["کد رهگیری را ارسال کنید"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "shipment_optional_tracking_valid_post",
+      "title": "After optional ask: valid Iran Post code",
+      "category": "shipment_delivery_decision",
+      "ticket_label": "shipment",
+      "messages": [
+        {
+          "sender_type": "support_agent",
+          "text": "لطفاً روش ارسال و کد رهگیری پستی را در صورت وجود ارسال کنید."
+        },
+        {
+          "sender_type": "seller",
+          "text": "195370506501166594474111"
+        }
+      ],
+      "expected": {
+        "must_contain": ["کد رهگیری پستی با موفقیت بررسی شد", "درخواست شما ثبت و در دست بررسی قرار گرفت."],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "shipment_optional_tracking_invalid_post",
+      "title": "After optional ask: invalid Iran Post code",
+      "category": "shipment_delivery_decision",
+      "ticket_label": "shipment",
+      "messages": [
+        {
+          "sender_type": "support_agent",
+          "text": "لطفاً روش ارسال و کد رهگیری پستی را در صورت وجود ارسال کنید."
+        },
+        {
+          "sender_type": "seller",
+          "text": "کد رهگیری 195370506501166594474111"
+        }
+      ],
+      "expected": {
+        "must_contain": ["نامعتبر", "در صورت وجود"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "graph_tool_order_delivered_skips_post",
+      "title": "Graph tools: delivered order skips Iran Post",
+      "category": "shipment_delivery_decision",
+      "ticket_label": "shipment",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "سفارش INC-7358954 تحویل شد"
+        }
+      ],
+      "expected": {
+        "must_contain": ["وضعیت مرسوله: تحویل شده"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "graph_tool_shipment_missing_tracking",
+      "title": "Graph tools: shipment missing tracking asks optional",
+      "category": "shipment_delivery_decision",
+      "ticket_label": "shipment",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "سفارش INC-7351606 ارسال شد"
+        }
+      ],
+      "expected": {
+        "must_contain": ["روش ارسال", "کد رهگیری پستی", "در صورت وجود"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "graph_tool_delivery_missing_tracking_ack",
+      "title": "Graph tools: delivery completed without tracking ack",
+      "category": "shipment_delivery_decision",
+      "ticket_label": "shipment",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "سفارش INC-7351606 تحویل شد"
+        }
+      ],
+      "expected": {
+        "must_contain": ["درخواست تحویل سفارش شما ثبت شد"],
+        "must_not_contain": ["کد رهگیری پستی"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "graph_tool_iran_post_valid",
+      "title": "Graph tools: valid Iran Post code",
+      "category": "shipment_delivery_decision",
+      "ticket_label": "shipment",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "سفارش INC-7358954"
+        }
+      ],
+      "expected": {
+        "must_contain": ["کد رهگیری", "در دست بررسی قرار گرفت"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "graph_tool_iran_post_invalid",
+      "title": "Graph tools: invalid Iran Post code",
+      "category": "shipment_delivery_decision",
+      "ticket_label": "shipment",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "سفارش INC-7358954"
+        }
+      ],
+      "expected": {
+        "must_contain": ["نامعتبر"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "multi_order_all_delivered",
+      "title": "Multi-order all delivered aggregate reply",
+      "category": "shipment_delivery_decision",
+      "ticket_label": "shipment",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "سفارش‌های INC-7358055 و INC-7357421 تحویل شده لطفا اعمال کنید"
+        }
+      ],
+      "expected": {
+        "must_contain": ["سفارش‌های اعلام‌شده", "تحویل شده", "درخواست شما ثبت"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "multi_order_mixed_review",
+      "title": "Multi-order mixed statuses aggregate reply",
+      "category": "shipment_delivery_decision",
+      "ticket_label": "shipment",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "سفارش‌های INC-7358055 و INC-7357421 تحویل شده لطفا اعمال کنید"
+        }
+      ],
+      "expected": {
+        "must_contain": ["برخی", "در دست بررسی"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "multi_order_delivery_no_tracking_no_reask",
+      "title": "Multi-order delivery without tracking should not re-ask",
+      "category": "shipment_delivery_decision",
+      "ticket_label": "shipment",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "سفارش‌های INC-7358055 و INC-7357421 تحویل شده لطفا اعمال بفرمایید"
+        }
+      ],
+      "expected": {
+        "must_not_contain": ["کد رهگیری را ارسال کنید"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "multi_order_limit_exceeded",
+      "title": "Multi-order over limit should use compact registration reply",
+      "category": "shipment_delivery_decision",
+      "ticket_label": "shipment",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "INC-7357421، INC-7358055، INC-7358032، INC-7358099، INC-7358100، INC-7358101 تحویل شده لطفا اعمال کنید"
+        }
+      ],
+      "expected": {
+        "must_contain": ["بررسی سفارش‌های اعلام‌شده ثبت شد", "در دست بررسی"],
+        "should_generate_draft": true
+      }
+    },
+    {
+      "scenario_id": "shop_name_change_no_shop_id_request",
+      "title": "Shop rename should not ask shop/seller id",
+      "category": "shop_identity",
+      "ticket_label": "support",
+      "shop_id": "4136",
+      "messages": [
+        {
+          "sender_type": "seller",
+          "text": "می خواستم اسم فروشگاه رو به شالیزار تغییر بدم"
+        }
+      ],
+      "expected": {
+        "must_not_contain": ["شناسه فروشگاه", "shop id", "شناسه فروشنده"],
+        "must_contain": ["درخواست شما ثبت شد"],
+        "should_generate_draft": true
+      }
+    }
+  ]
+}

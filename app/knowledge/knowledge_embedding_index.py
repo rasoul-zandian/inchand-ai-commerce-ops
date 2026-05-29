@@ -233,6 +233,36 @@ def build_knowledge_vector_records(
     return records
 
 
+def delete_knowledge_sandbox_index(
+    *,
+    namespace: str,
+    index_version: str,
+    database_url: str,
+    table_name: str = "rag_vector_records",
+) -> int:
+    """Delete prior sandbox knowledge rows for namespace/version before re-index."""
+    import psycopg
+
+    assert_sandbox_database_url(database_url)
+    table = table_name.strip()
+    if not table.replace("_", "").isalnum():
+        raise ValueError(f"invalid table name: {table_name!r}")
+    ns = namespace.strip()
+    version = index_version.strip()
+    sql = f"""
+        DELETE FROM {table}
+        WHERE record_id LIKE 'knowledge::%%'
+          AND metadata->>'namespace' = %s
+          AND metadata->>'index_version' = %s
+    """
+    with psycopg.connect(database_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, (ns, version))
+            deleted = cur.rowcount
+        conn.commit()
+    return int(deleted or 0)
+
+
 def index_knowledge_chunks_pgvector(
     records: list[VectorRecord],
     *,

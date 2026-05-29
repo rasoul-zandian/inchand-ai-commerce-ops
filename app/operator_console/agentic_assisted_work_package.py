@@ -13,6 +13,15 @@ from app.operator_console.agentic_sandbox_preview import (
 )
 from app.operator_console.console_models import OperatorTicket
 from app.operator_console.i18n import DEFAULT_CONSOLE_LANG, assisted_checklist_for_lang, is_fa, t
+from app.operator_console.inchand_order_lookup_panel import render_inchand_order_lookup_panel
+from app.operator_console.iran_post_tracking_panel import (
+    render_iran_post_tracking_verification_panel,
+)
+from app.operator_console.reflection_comparison import (
+    reflection_comparison_available,
+    reflection_disabled_debug_line,
+    render_reflection_comparison_section,
+)
 
 _MAIN_SECTION_KEYS = frozenset(
     {
@@ -150,6 +159,22 @@ def build_assisted_work_package_debug_lines(
         lines.append("**Errors**")
         for error in graph.errors:
             lines.append(f"- {error[:200]}")
+    lines.append("")
+    lines.append("**Final draft reflection**")
+    lines.append(
+        f"- reflection_comparison_available: {_display(reflection_comparison_available(graph))}",
+    )
+    lines.append(f"- Reflection enabled: {_display(graph.reflection_enabled)}")
+    lines.append(f"- Reflection provider: {graph.reflection_provider or '—'}")
+    lines.append(f"- Reflection reviewed: {_display(graph.reflection_reviewed)}")
+    lines.append(f"- Reflection rewrite applied: {_display(graph.reflection_rewrite_applied)}")
+    if graph.reflection_issue_types:
+        lines.append(f"- Reflection issue types: {', '.join(graph.reflection_issue_types)}")
+    else:
+        lines.append("- Reflection issue types: —")
+    disabled_line = reflection_disabled_debug_line(graph, lang=lang)
+    if disabled_line:
+        lines.append(f"- {disabled_line}")
     return lines
 
 
@@ -167,6 +192,7 @@ def render_operator_assisted_work_package(
     ticket: OperatorTicket,
     *,
     lang: str = DEFAULT_CONSOLE_LANG,
+    source_mode: str = "historical_replay",
 ) -> None:
     """Render simplified assisted package in Streamlit."""
     sections = build_assisted_work_package_main_sections(package, ticket, lang=lang)
@@ -215,6 +241,32 @@ def render_operator_assisted_work_package(
     if graph.draft_style:
         meta += f" · {t('draft_style', lang)}: {graph.draft_style}"
     streamlit.caption(meta)
+
+    streamlit.markdown(f"##### {t('reflection_comparison_section_heading', lang)}")
+    render_reflection_comparison_section(
+        streamlit,
+        graph,
+        ticket.room_id,
+        lang=lang,
+    )
+
+    render_iran_post_tracking_verification_panel(
+        streamlit,
+        ticket,
+        graph,
+        streamlit.session_state,
+        lang=lang,
+        source_mode=source_mode,
+    )
+
+    render_inchand_order_lookup_panel(
+        streamlit,
+        ticket,
+        graph,
+        streamlit.session_state,
+        lang=lang,
+        source_mode=source_mode,
+    )
 
     streamlit.markdown(f"##### {t('assisted_section_safety', lang)}")
     streamlit.markdown(sections["safety_status"])

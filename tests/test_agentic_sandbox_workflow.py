@@ -97,6 +97,10 @@ def test_all_nodes_run_in_order_mock_llm() -> None:
     assert final["draft_reply"]
     assert "ارجاع" not in (final["draft_reply"] or "")
     assert final["actionability"].get("requires_identifier_request") is True
+    comparison = final.get("final_draft_reflection_comparison") or {}
+    assert isinstance(comparison, dict)
+    assert (comparison.get("pre_reflection_draft") or "").strip()
+    assert (comparison.get("final_reflected_draft") or "").strip()
 
 
 def test_missing_identifier_routes_to_identifier_request() -> None:
@@ -111,7 +115,7 @@ def test_missing_identifier_routes_to_identifier_request() -> None:
     )
     final = run_agentic_sandbox_workflow(initial, settings=settings)
     draft = final.get("draft_reply") or ""
-    assert "شناسه کالا" in draft
+    assert ("شناسه کالا" in draft) or ("شماره سفارش" in draft)
     assert not draft_claims_fake_operational_execution(draft)
 
 

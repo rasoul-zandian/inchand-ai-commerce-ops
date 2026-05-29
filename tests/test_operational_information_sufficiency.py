@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from app.agentic_sandbox.mock_draft_templates import (
     MockOperationalDraftInput,
     generate_mock_operational_draft,
@@ -17,7 +18,9 @@ from app.workflows.operational_information_sufficiency import (
     detect_operational_scenario,
     detect_over_questioning,
     detect_unnecessary_detail_request,
+    detect_unnecessary_shop_identifier_request,
     evaluate_operational_sufficiency,
+    has_runtime_shop_identity_context,
     is_cancellation_request_message,
     is_delivery_completed_seller_message,
     minimum_required_operational_entities,
@@ -110,8 +113,9 @@ def test_reshipment_with_order_id_requires_tracking_and_shipping() -> None:
             order_ids=("1234567",),
         ),
     )
-    assert "نحوه ارسال" in draft
-    assert "کد رهگیری" in draft
+    assert "روش ارسال" in draft
+    assert "کد رهگیری پستی" in draft
+    assert "در صورت وجود" in draft
 
 
 def test_delivery_completed_without_order_id_requests_order_id_only() -> None:
@@ -192,6 +196,24 @@ def test_settlement_informational_does_not_require_entities() -> None:
     assert any("Do not ask for additional details" in hint for hint in hints)
 
 
+def test_commission_policy_question_requires_no_order_or_tracking_entities() -> None:
+    seller = "کمیسیون فروش چند درصده؟"
+    assert (
+        detect_operational_scenario(
+            seller_text=seller,
+            detected_intent=VendorTicketIntent.COMMISSION_POLICY_QUESTION.value,
+            suggested_action="answer_policy_question",
+        )
+        == "settlement_informational"
+    )
+    missing = minimum_required_operational_entities(
+        seller_text=seller,
+        detected_intent=VendorTicketIntent.COMMISSION_POLICY_QUESTION.value,
+        suggested_action="answer_policy_question",
+    )
+    assert missing == ()
+
+
 def test_operationally_complete_draft_strips_provide_more_details() -> None:
     draft = "درخواست لغو سفارش شما ثبت شد. لطفاً جزئیات بیشتری ارائه دهید."
     calibrated, result = apply_operational_sufficiency_calibration(
@@ -229,6 +251,81 @@ def test_delivery_completed_over_questioning_flags_tracking_ask() -> None:
     )
     assert result.operationally_complete_request
     assert result.over_questioning
+
+
+def test_delivery_completed_customer_phone_off_maps_to_delivery_completed() -> None:
+    seller = "سلام این سفارش تحویل دادم INC-7353428 ولی مشتری گوشیش خاموشه که کد تحویل بزنم"
+    assert is_delivery_completed_seller_message(seller)
+    assert (
+        detect_operational_scenario(
+            seller_text=seller,
+            detected_intent=VendorTicketIntent.DELIVERY_CONFIRMATION_REQUEST.value,
+            suggested_action="update_delivery_status",
+        )
+        == "delivery_completed"
+    )
+    order_ids = resolve_operational_order_ids(seller, (), scenario="delivery_completed")
+    assert order_ids == ("7353428",)
+    assert (
+        minimum_required_operational_entities(
+            seller_text=seller,
+            detected_intent=VendorTicketIntent.DELIVERY_CONFIRMATION_REQUEST.value,
+            suggested_action="update_delivery_status",
+            order_ids=order_ids,
+        )
+        == ()
+    )
+
+
+@pytest.mark.parametrize(
+    "seller",
+    (
+        "سفارش شماره INC-7358055 تحویل شده لطفا اعمال بفرمایید",
+        "سفارش شماره INC-7358055 تحویل شده لطفاً اعمال بفرمایید",
+        "سفارش شماره INC-7358055 تحویل شد اعمال کنید",
+        "سفارش شماره INC-7358055 تحویل دادم اعمال کنید",
+        "سفارش شماره INC-7358055 تحویل ن شده لطفا اعمال بفرمایید",
+    ),
+)
+def test_delivery_apply_and_typo_messages_map_to_delivery_completed(seller: str) -> None:
+    assert is_delivery_completed_seller_message(seller) is True
+    assert (
+        detect_operational_scenario(
+            seller_text=seller,
+            detected_intent=VendorTicketIntent.DELIVERY_CONFIRMATION_REQUEST.value,
+            suggested_action="update_delivery_status",
+        )
+        == "delivery_completed"
+    )
+
+
+def test_delivery_completed_without_order_id_requests_order_id_only_even_with_code_issue() -> None:
+    seller = "تحویل دادم ولی کد دریافت مشتری را ندارم"
+    assert is_delivery_completed_seller_message(seller)
+    missing = minimum_required_operational_entities(
+        seller_text=seller,
+        detected_intent=VendorTicketIntent.DELIVERY_CONFIRMATION_REQUEST.value,
+        suggested_action="update_delivery_status",
+    )
+    assert missing == ("order_id",)
+    followups = operational_followup_requirements(
+        seller_text=seller,
+        detected_intent=VendorTicketIntent.DELIVERY_CONFIRMATION_REQUEST.value,
+        suggested_action="update_delivery_status",
+    )
+    assert followups == ("request_order_id_for_delivery_only",)
+
+
+def test_shipment_message_still_classified_as_shipment_reshipment() -> None:
+    seller = "سفارش 7353428 ارسال شد"
+    assert (
+        detect_operational_scenario(
+            seller_text=seller,
+            detected_intent=VendorTicketIntent.DELIVERY_CONFIRMATION_REQUEST.value,
+            suggested_action="update_delivery_status",
+        )
+        == "shipment_reshipment"
+    )
 
 
 def test_openai_prompt_distinguishes_delivered_vs_shipped() -> None:
@@ -270,6 +367,32 @@ def test_openai_prompt_distinguishes_delivered_vs_shipped() -> None:
     combined = "\n".join(message.content for message in messages)
     assert "delivery to customer" in combined
     assert "Do not ask for tracking code" in combined
+
+
+def test_cancellation_laghv_shavad_phrase() -> None:
+    assert is_cancellation_request_message("سفارش 7367917 لغو شود")
+
+
+def test_cancellation_without_order_id_asks_order_only() -> None:
+    from app.agentic_sandbox.mock_draft_templates import (
+        MockOperationalDraftInput,
+        generate_mock_operational_draft,
+    )
+
+    draft = generate_mock_operational_draft(
+        MockOperationalDraftInput(
+            detected_intent="cancellation_request",
+            suggested_action="human_followup",
+            seller_text="لغو سفارش",
+            actionability={
+                "actionability_actionable": False,
+                "actionability_missing_entities": "order_id",
+                "requires_identifier_request": True,
+            },
+        ),
+    )
+    assert draft == "لطفاً شماره سفارش را ارسال کنید تا درخواست لغو بررسی شود."
+    assert "دلیل" not in draft
 
 
 def test_cancellation_regression_with_order_no_tracking_ask() -> None:
@@ -388,8 +511,9 @@ def test_shipment_reshipment_regression_still_requests_tracking() -> None:
             order_ids=order_ids,
         ),
     )
-    assert "نحوه ارسال" in draft
-    assert "کد رهگیری" in draft
+    assert "روش ارسال" in draft
+    assert "کد رهگیری پستی" in draft
+    assert "در صورت وجود" in draft
 
 
 def test_cancellation_wins_over_shipment_words_in_text() -> None:
@@ -458,3 +582,29 @@ def test_openai_prompt_hints_include_negative_tracking_constraints() -> None:
     assert any("NEVER ask for shipping method or tracking code" in hint for hint in cancel_hints)
     assert any("NEVER ask for shipping method or tracking code" in hint for hint in delivery_hints)
     assert any("ONLY when seller reports shipment/reshipment" in hint for hint in shipment_hints)
+
+
+def test_runtime_shop_identity_context_detected_from_shop_id() -> None:
+    assert has_runtime_shop_identity_context(shop_id="shop-4136") is True
+
+
+def test_runtime_shop_identity_context_detected_from_session() -> None:
+    assert (
+        has_runtime_shop_identity_context(session_state={"manual_sandbox_shop_id": "4136"}) is True
+    )
+
+
+def test_unnecessary_shop_identifier_request_detected_with_runtime_context() -> None:
+    draft = "برای تغییر نام فروشگاه، لطفاً شناسه فروشگاه خود را ارائه دهید."
+    assert detect_unnecessary_shop_identifier_request(
+        draft,
+        runtime_shop_identity_available=True,
+    )
+
+
+def test_unnecessary_shop_identifier_request_not_detected_without_runtime_context() -> None:
+    draft = "لطفاً شناسه فروشنده را وارد کنید."
+    assert not detect_unnecessary_shop_identifier_request(
+        draft,
+        runtime_shop_identity_available=False,
+    )

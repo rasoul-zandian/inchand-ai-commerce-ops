@@ -1,0 +1,17 @@
+{
+  "scenario_id": "tracking_and_shipping_method_fulfilled",
+  "draft_fingerprint": "3b0f07dbb5d292658a0c26975a30ec41626d013f7480ab9630068854408240da",
+  "detected_intent": "tracking_code_notification",
+  "suggested_action": "record_update",
+  "reflection_rewrite_applied": true,
+  "should_generate_draft": true,
+  "policy_question_type": "none",
+  "reflection_issue_types": [
+    "repeated_identifier_request",
+    "missing_operational_ack"
+  ],
+  "graph_status": "ok",
+  "eval_passed": true,
+  "skip_reason": null,
+  "updated_at_utc": "2026-05-26T14:04:21+00:00"
+}

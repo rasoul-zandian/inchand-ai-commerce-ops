@@ -1,0 +1,14 @@
+{
+  "scenario_id": "missing_tracking_request_shipment",
+  "draft_fingerprint": "85d10d1ed13d3de98b80415089e98a6d001acde9f40be30d9eebf14ffbcb4bbc",
+  "detected_intent": "seller_notification",
+  "suggested_action": "monitor",
+  "reflection_rewrite_applied": false,
+  "should_generate_draft": null,
+  "policy_question_type": "none",
+  "reflection_issue_types": [],
+  "graph_status": "ok",
+  "eval_passed": true,
+  "skip_reason": null,
+  "updated_at_utc": "2026-05-26T14:04:21+00:00"
+}

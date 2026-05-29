@@ -73,6 +73,14 @@ def test_settlement_inquiry_maps_to_check_settlement_status() -> None:
     assert mapping.action == VendorTicketAIAssistActionType.CHECK_SETTLEMENT_STATUS
 
 
+def test_commission_policy_maps_to_policy_explanation_action() -> None:
+    mapping = map_intent_to_suggested_action(
+        VendorTicketIntent.COMMISSION_POLICY_QUESTION,
+        normalized_text="کمیسیون فروش چند درصده؟",
+    )
+    assert mapping.action == VendorTicketAIAssistActionType.ANSWER_POLICY_QUESTION
+
+
 def test_passive_notification_maps_to_monitor_or_record() -> None:
     mapping = map_intent_to_suggested_action(
         VendorTicketIntent.GENERAL_VENDOR_SUPPORT,
@@ -136,6 +144,24 @@ def test_settlement_panel_operational_maps_to_check_settlement() -> None:
         normalized_text="پنل تسویه بسته است و واریز نشده",
     )
     assert mapping.action == VendorTicketAIAssistActionType.CHECK_SETTLEMENT_STATUS
+
+
+def test_cancellation_request_maps_to_human_followup() -> None:
+    mapping = map_intent_to_suggested_action(
+        VendorTicketIntent.CANCELLATION_REQUEST,
+        normalized_text="سفارش 7367917 لغو شود",
+    )
+    assert mapping.action == VendorTicketAIAssistActionType.HUMAN_FOLLOWUP
+    assert mapping.fallback_reason == "cancellation_request"
+
+
+def test_cancellation_overrides_seller_notification_action() -> None:
+    mapping = map_intent_to_suggested_action(
+        VendorTicketIntent.SELLER_NOTIFICATION,
+        normalized_text="سفارش 7367917 لغو شود",
+    )
+    assert mapping.action == VendorTicketAIAssistActionType.HUMAN_FOLLOWUP
+    assert mapping.fallback_reason == "cancellation_request"
 
 
 def test_tracking_notification_only_maps_to_record_update() -> None:

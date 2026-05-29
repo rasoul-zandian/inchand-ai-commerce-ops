@@ -1,0 +1,21 @@
+{
+  "scenario_id": "repeated_tracking_ask_prevention",
+  "draft_fingerprint": "3b0f07dbb5d292658a0c26975a30ec41626d013f7480ab9630068854408240da",
+  "detected_intent": "unknown",
+  "suggested_action": "monitor",
+  "reflection_rewrite_applied": true,
+  "should_generate_draft": true,
+  "policy_question_type": "none",
+  "reflection_issue_types": [
+    "unnecessary_question",
+    "over_questioning",
+    "over_questioning",
+    "unnecessary_question",
+    "missing_operational_ack",
+    "missing_operational_ack"
+  ],
+  "graph_status": "ok",
+  "eval_passed": true,
+  "skip_reason": null,
+  "updated_at_utc": "2026-05-26T14:04:21+00:00"
+}

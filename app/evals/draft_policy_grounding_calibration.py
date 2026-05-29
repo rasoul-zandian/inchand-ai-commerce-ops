@@ -13,6 +13,7 @@ from app.knowledge.policy_fact_extraction import (
     calibrate_sheba_issue_draft,
     draft_has_settlement_grounding,
     is_settlement_account_operational_request,
+    is_settlement_bank_policy_question,
     is_settlement_timing_policy_question,
     is_vague_settlement_policy_draft,
 )
@@ -43,6 +44,41 @@ def apply_policy_grounding_calibration(
 ) -> PolicyGroundingCalibrationResult:
     """Ground policy_explanation drafts using safe policy facts when needed."""
     cleaned = draft.strip()
+
+    settlement_policy = is_settlement_bank_policy_question(
+        seller_text,
+        detected_intent=detected_intent,
+        conceptual_intent_fa=conceptual_intent_fa,
+        suggested_action=suggested_action,
+    ) or is_settlement_timing_policy_question(
+        seller_text,
+        detected_intent=detected_intent,
+        conceptual_intent_fa=conceptual_intent_fa,
+        suggested_action=suggested_action,
+    )
+    if settlement_policy and (
+        draft_style == DRAFT_STYLE_POLICY_EXPLANATION
+        or is_settlement_bank_policy_question(
+            seller_text,
+            detected_intent=detected_intent,
+            conceptual_intent_fa=conceptual_intent_fa,
+            suggested_action=suggested_action,
+        )
+    ):
+        calibrated, settlement_changed = calibrate_settlement_policy_draft(
+            cleaned,
+            seller_text=seller_text,
+            detected_intent=detected_intent,
+            suggested_action=suggested_action,
+            hints=hints,
+            conceptual_intent_fa=conceptual_intent_fa,
+            draft_style=DRAFT_STYLE_POLICY_EXPLANATION,
+        )
+        return PolicyGroundingCalibrationResult(
+            draft_reply=calibrated,
+            policy_grounding_calibrated=settlement_changed,
+            settlement_grounding_calibrated=settlement_changed,
+        )
 
     if is_settlement_account_operational_request(
         seller_text,

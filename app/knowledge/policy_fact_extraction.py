@@ -19,6 +19,38 @@ SETTLEMENT_CANONICAL_DRAFT_ANSWER = (
     "به حساب فروشنده واریز می‌شود."
 )
 
+SETTLEMENT_BANK_CANONICAL_DRAFT_ANSWER = (
+    "به دلیل محدودیت‌های اعمال‌شده از سوی بانک مرکزی، از ابتدای بهمن تمامی "
+    "تسویه‌حساب‌ها صرفاً از طریق حساب‌های بانک سامان انجام می‌شود؛ بنابراین "
+    "شماره حساب یا شبای معرفی‌شده برای تسویه باید مربوط به بانک سامان باشد."
+)
+
+COMMISSION_POLICY_FALLBACK_DRAFT_ANSWER = (
+    "میزان کمیسیون بر اساس نوع کالا و دسته‌بندی تعیین می‌شود و برای اعلام "
+    "دقیق‌تر توسط پشتیبانی بررسی خواهد شد."
+)
+
+_COMMISSION_POLICY_MARKERS = (
+    "کمیسیون",
+    "کارمزد فروش",
+    "کارمزد",
+    "هزینه فروش",
+    "درصد کمیسیون",
+    "چند درصد",
+    "چنددرصد",
+    "درصد فروش",
+)
+
+_POLICY_INFORMATIONAL_MARKERS = (
+    "قوانین تسویه",
+    "زمان تسویه",
+    "شرایط انتشار",
+    "شرایط انتشار کالا",
+    "قوانین سایت",
+    "چطور حساب",
+    "چگونه حساب",
+)
+
 _VAGUE_SETTLEMENT_PHRASES = (
     "بستگی دارد",
     "به قوانین مراجعه",
@@ -48,6 +80,36 @@ _SETTLEMENT_TIMING_POSITIVE_MARKERS = (
     "هنوز تسویه",
     "وضعیت واریز",
     "وضعیت تسویه",
+)
+
+_SETTLEMENT_BANK_POLICY_POSITIVE_MARKERS = (
+    "کدام بانک",
+    "چه بانکی",
+    "مربوط به کدام بانک",
+    "حساب کدام بانک",
+    "شبا کدام بانک",
+    "شماره حساب کدام بانک",
+    "بانک سامان",
+    "بانک برای تسویه",
+    "حساب برای تسویه",
+    "شبای چه بانکی",
+    "شبا چه بانکی",
+    "برای تسویه",
+)
+
+_SETTLEMENT_ACCOUNT_OPERATIONAL_NEGATIVE_MARKERS = (
+    "شبا ثبت نمی",
+    "شماره شبا ثبت نمی",
+    "شماره شبام ثبت",
+    "ثبت شبا",
+    "تغییر شبا",
+    "اصلاح شبا",
+    "لطفا این شبا ثبت",
+    "لطفاً این شبا ثبت",
+    "شبا را ثبت کنید",
+    "ثبت و اعلام گردد",
+    "ثبت و اعلام",
+    "ثبت اطلاعات تسویه",
 )
 
 _SETTLEMENT_ACCOUNT_OPERATIONAL_MARKERS = (
@@ -99,6 +161,174 @@ def _text_has_marker(text: str, markers: Sequence[str]) -> bool:
     return False
 
 
+def _has_settlement_context(text: str) -> bool:
+    normalized = _normalize_policy_match_text(text)
+    return "تسویه" in normalized or "تسویهحساب" in normalized
+
+
+def is_commission_policy_question(
+    text: str,
+    *,
+    detected_intent: str | None = None,
+    conceptual_intent_fa: str | None = None,
+    suggested_action: str | None = None,
+) -> bool:
+    """True when seller asks about commission/pricing rules (not an operational case)."""
+    from app.workflows.suggested_action_taxonomy import _seller_asks_operational_action
+    from app.workflows.vendor_ticket_intent_detection import VendorTicketIntent
+
+    seller = (text or "").strip()
+    if not seller:
+        return False
+    if _seller_asks_operational_action(seller.lower()):
+        return False
+    intent = (detected_intent or "").strip().lower()
+    if intent == VendorTicketIntent.COMMISSION_POLICY_QUESTION.value:
+        return True
+    conceptual = (conceptual_intent_fa or "").strip()
+    if "کمیسیون" in conceptual or "کارمزد" in conceptual:
+        return True
+    _ = suggested_action
+    return _text_has_marker(seller, _COMMISSION_POLICY_MARKERS)
+
+
+def is_vague_commission_policy_draft(draft: str) -> bool:
+    """True when a commission policy draft defers to guides without substance."""
+    cleaned = (draft or "").strip()
+    if not cleaned:
+        return True
+    if _text_has_marker(cleaned, _VAGUE_SETTLEMENT_PHRASES):
+        return True
+    if "راهنمای کمیسیون" in cleaned or "راهنما" in cleaned and "کمیسیون" in cleaned:
+        return True
+    return False
+
+
+def is_policy_or_informational_question(
+    text: str,
+    *,
+    detected_intent: str | None = None,
+    conceptual_intent_fa: str | None = None,
+    suggested_action: str | None = None,
+) -> bool:
+    """True when seller asks for rules/pricing/process information (not operational action)."""
+    from app.evals.draft_completion_calibration import is_informational_question
+    from app.workflows.vendor_ticket_intent_detection import VendorTicketIntent
+
+    seller = (text or "").strip()
+    if not seller:
+        return False
+
+    if is_commission_policy_question(
+        seller,
+        detected_intent=detected_intent,
+        conceptual_intent_fa=conceptual_intent_fa,
+        suggested_action=suggested_action,
+    ):
+        return True
+
+    if is_settlement_bank_policy_question(
+        seller,
+        detected_intent=detected_intent,
+        conceptual_intent_fa=conceptual_intent_fa,
+        suggested_action=suggested_action,
+    ) or is_settlement_timing_policy_question(
+        seller,
+        detected_intent=detected_intent,
+        conceptual_intent_fa=conceptual_intent_fa,
+        suggested_action=suggested_action,
+    ):
+        return True
+
+    intent = (detected_intent or "").strip().lower()
+    if intent in {
+        VendorTicketIntent.PROHIBITED_GOODS_QUESTION.value,
+        VendorTicketIntent.PRODUCT_PUBLISHING_QUESTION.value,
+        VendorTicketIntent.COMMISSION_POLICY_QUESTION.value,
+    }:
+        return True
+
+    if _text_has_marker(seller, _POLICY_INFORMATIONAL_MARKERS):
+        from app.workflows.suggested_action_taxonomy import _seller_asks_operational_action
+
+        if not _seller_asks_operational_action(seller.lower()):
+            return True
+
+    return is_informational_question(seller, detected_intent=detected_intent)
+
+
+def _is_settlement_bank_policy_question_text(text: str) -> bool:
+    """Heuristic bank-policy question detection on seller text only."""
+    seller = (text or "").strip()
+    if not seller:
+        return False
+    if _text_has_marker(seller, _SETTLEMENT_ACCOUNT_OPERATIONAL_NEGATIVE_MARKERS):
+        return False
+    if not _has_settlement_context(seller) and not _text_has_marker(
+        seller,
+        ("بانک سامان", "بانک برای تسویه", "حساب برای تسویه"),
+    ):
+        return False
+    if _text_has_marker(seller, _SETTLEMENT_BANK_POLICY_POSITIVE_MARKERS):
+        return True
+    if "بانک" in seller and ("?" in seller or "؟" in seller):
+        if _has_settlement_context(seller) or "شبا" in seller or "حساب" in seller:
+            return True
+    if _has_settlement_context(seller) and "بانک" in seller:
+        if any(token in seller for token in ("کدام", "چه", "مربوط", "قابل قبول")):
+            return True
+        if "شبا" in seller or "شماره حساب" in seller:
+            if any(token in seller for token in ("کدام", "چه", "مربوط", "باید")):
+                return True
+    return False
+
+
+def is_settlement_bank_policy_question(
+    text: str,
+    *,
+    detected_intent: str | None = None,
+    conceptual_intent_fa: str | None = None,
+    suggested_action: str | None = None,
+) -> bool:
+    """True when seller asks which bank/account/IBAN is acceptable for settlement."""
+    _ = detected_intent, conceptual_intent_fa, suggested_action
+    return _is_settlement_bank_policy_question_text(text)
+
+
+def resolve_policy_question_type(
+    text: str,
+    *,
+    detected_intent: str | None = None,
+    conceptual_intent_fa: str | None = None,
+    suggested_action: str | None = None,
+) -> str:
+    """Classify settlement policy question for diagnostics (no raw prompts)."""
+    seller = (text or "").strip()
+    if not seller:
+        return "none"
+    if is_settlement_bank_policy_question(
+        seller,
+        detected_intent=detected_intent,
+        conceptual_intent_fa=conceptual_intent_fa,
+        suggested_action=suggested_action,
+    ):
+        return "settlement_bank"
+    if is_settlement_timing_policy_question(
+        seller,
+        detected_intent=detected_intent,
+        conceptual_intent_fa=conceptual_intent_fa,
+        suggested_action=suggested_action,
+    ):
+        return "settlement_timing"
+    if _has_settlement_context(seller) and (
+        "?" in seller
+        or "؟" in seller
+        or any(token in seller for token in ("شرایط", "قانون", "قوانین", "مقررات"))
+    ):
+        return "settlement_general"
+    return "none"
+
+
 def _has_explicit_settlement_timing_question(text: str) -> bool:
     """True when seller text explicitly asks about settlement timing or rules."""
     if _text_has_marker(text, _SETTLEMENT_TIMING_POSITIVE_MARKERS):
@@ -126,6 +356,17 @@ def is_settlement_account_operational_request(
     seller = (text or "").strip()
     if not seller:
         return False
+
+    if is_settlement_bank_policy_question(
+        seller,
+        detected_intent=detected_intent,
+        conceptual_intent_fa=conceptual_intent_fa,
+        suggested_action=suggested_action,
+    ):
+        return False
+
+    if _text_has_marker(seller, _SETTLEMENT_ACCOUNT_OPERATIONAL_NEGATIVE_MARKERS):
+        return True
 
     if _text_has_marker(seller, _SETTLEMENT_ACCOUNT_OPERATIONAL_MARKERS):
         return True
@@ -294,6 +535,14 @@ def is_settlement_timing_policy_question(
     if not seller:
         return False
 
+    if is_settlement_bank_policy_question(
+        seller,
+        detected_intent=detected_intent,
+        conceptual_intent_fa=conceptual_intent_fa,
+        suggested_action=suggested_action,
+    ):
+        return False
+
     account_operational = is_settlement_account_operational_request(
         seller,
         detected_intent=detected_intent,
@@ -442,7 +691,11 @@ def _preferred_document_types(
     intent = (detected_intent or "").strip().lower()
     text = seller_text.strip()
 
-    if is_settlement_timing_policy_question(
+    if is_settlement_bank_policy_question(
+        seller_text,
+        detected_intent=detected_intent,
+        suggested_action=suggested_action,
+    ) or is_settlement_timing_policy_question(
         seller_text,
         detected_intent=detected_intent,
         suggested_action=suggested_action,
@@ -541,11 +794,19 @@ def build_policy_facts_prompt_block(
         document_types=document_types,
         hints=hints,
     )
-    if not is_settlement_timing_policy_question(
-        seller_text,
-        detected_intent=detected_intent,
-        conceptual_intent_fa=conceptual_intent_fa,
-        suggested_action=suggested_action,
+    if not (
+        is_settlement_bank_policy_question(
+            seller_text,
+            detected_intent=detected_intent,
+            conceptual_intent_fa=conceptual_intent_fa,
+            suggested_action=suggested_action,
+        )
+        or is_settlement_timing_policy_question(
+            seller_text,
+            detected_intent=detected_intent,
+            conceptual_intent_fa=conceptual_intent_fa,
+            suggested_action=suggested_action,
+        )
     ):
         facts = tuple(
             fact
@@ -584,6 +845,37 @@ def settlement_fact_present(facts: Sequence[SafePolicyFact]) -> bool:
     return False
 
 
+def settlement_bank_fact_present(facts: Sequence[SafePolicyFact]) -> bool:
+    """True when settlement_rules fact mentions Saman bank / central bank policy."""
+    for fact in facts:
+        if fact.document_type != KnowledgeDocumentType.SETTLEMENT_RULES.value:
+            continue
+        text = fact.text
+        if "بانک سامان" in text and ("بانک مرکزی" in text or "تسویه" in text):
+            return True
+        if "بانک سامان" in text and "تسویه‌حساب" in text:
+            return True
+    return False
+
+
+def canonical_settlement_bank_answer() -> str:
+    """Canonical grounded answer for settlement bank policy questions."""
+    return SETTLEMENT_BANK_CANONICAL_DRAFT_ANSWER
+
+
+def settlement_bank_policy_answer(
+    facts: Sequence[SafePolicyFact] | None = None,
+) -> str:
+    """Return bank policy answer, preferring extracted facts when present."""
+    if facts and settlement_bank_fact_present(facts):
+        for fact in facts:
+            if fact.document_type != KnowledgeDocumentType.SETTLEMENT_RULES.value:
+                continue
+            if "بانک سامان" in fact.text:
+                return SETTLEMENT_BANK_CANONICAL_DRAFT_ANSWER
+    return SETTLEMENT_BANK_CANONICAL_DRAFT_ANSWER
+
+
 def draft_has_settlement_grounding(draft: str) -> bool:
     """True when draft states wallet block, 3-day finalization, and payout window."""
     text = draft.strip()
@@ -600,6 +892,28 @@ def is_vague_settlement_policy_draft(draft: str) -> bool:
     return any(marker in draft for marker in _VAGUE_SETTLEMENT_PHRASES)
 
 
+def draft_has_settlement_bank_grounding(draft: str) -> bool:
+    """True when draft states Saman-only settlement bank policy."""
+    text = draft.strip()
+    if not text:
+        return False
+    return "بانک سامان" in text and ("بانک مرکزی" in text or "تسویه" in text)
+
+
+def is_vague_settlement_bank_policy_draft(draft: str) -> bool:
+    """True when bank-policy draft asks for Sheba or stays generic."""
+    text = draft.strip()
+    if not text:
+        return True
+    if draft_requests_sheba_number_again(text):
+        return True
+    if any(marker in text for marker in _VAGUE_SETTLEMENT_PHRASES):
+        return True
+    if "شماره شبای صحیح" in text or "شماره شبا را ارسال" in text:
+        return True
+    return not draft_has_settlement_bank_grounding(text)
+
+
 def build_deterministic_settlement_answer_from_facts(
     facts: Sequence[SafePolicyFact],
 ) -> str:
@@ -610,6 +924,48 @@ def build_deterministic_settlement_answer_from_facts(
         if fact.document_type == KnowledgeDocumentType.SETTLEMENT_RULES.value:
             return SETTLEMENT_CANONICAL_DRAFT_ANSWER
     return SETTLEMENT_CANONICAL_DRAFT_ANSWER
+
+
+def calibrate_settlement_bank_policy_draft(
+    draft: str,
+    *,
+    seller_text: str,
+    detected_intent: str | None,
+    suggested_action: str | None,
+    hints: Sequence[KnowledgeHint | Mapping[str, Any]] = (),
+    conceptual_intent_fa: str | None = None,
+    draft_style: str | None = None,
+) -> tuple[str, bool]:
+    """Replace vague/wrong bank-policy drafts with canonical Saman-bank answer."""
+    from app.evals.draft_style import DRAFT_STYLE_POLICY_EXPLANATION
+
+    if not is_settlement_bank_policy_question(
+        seller_text,
+        detected_intent=detected_intent,
+        conceptual_intent_fa=conceptual_intent_fa,
+        suggested_action=suggested_action,
+    ):
+        return draft.strip(), False
+    if draft_style and draft_style != DRAFT_STYLE_POLICY_EXPLANATION:
+        return draft.strip(), False
+
+    facts = select_policy_facts_for_draft(
+        detected_intent=detected_intent,
+        suggested_action=suggested_action,
+        seller_text=seller_text,
+        hints=hints,
+    )
+    answer = settlement_bank_policy_answer(facts)
+    cleaned = draft.strip()
+    if draft_has_settlement_bank_grounding(cleaned) and not is_vague_settlement_bank_policy_draft(
+        cleaned,
+    ):
+        return cleaned, False
+    if is_vague_settlement_bank_policy_draft(cleaned) or not draft_has_settlement_bank_grounding(
+        cleaned,
+    ):
+        return answer, True
+    return cleaned, False
 
 
 def calibrate_settlement_policy_draft(
@@ -624,6 +980,22 @@ def calibrate_settlement_policy_draft(
 ) -> tuple[str, bool]:
     """Replace vague/ungrounded settlement drafts with deterministic policy answer."""
     from app.evals.draft_style import DRAFT_STYLE_POLICY_EXPLANATION
+
+    if is_settlement_bank_policy_question(
+        seller_text,
+        detected_intent=detected_intent,
+        conceptual_intent_fa=conceptual_intent_fa,
+        suggested_action=suggested_action,
+    ):
+        return calibrate_settlement_bank_policy_draft(
+            draft,
+            seller_text=seller_text,
+            detected_intent=detected_intent,
+            suggested_action=suggested_action,
+            hints=hints,
+            conceptual_intent_fa=conceptual_intent_fa,
+            draft_style=draft_style,
+        )
 
     if not is_settlement_timing_policy_question(
         seller_text,

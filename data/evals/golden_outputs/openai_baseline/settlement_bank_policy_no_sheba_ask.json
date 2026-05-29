@@ -1,0 +1,14 @@
+{
+  "scenario_id": "settlement_bank_policy_no_sheba_ask",
+  "draft_fingerprint": "bbbd504ee775a5932b4186f183e44ef6a57441042b1e03a5ef54829c3feeae5d",
+  "detected_intent": "settlement_status_inquiry",
+  "suggested_action": "billing_review",
+  "reflection_rewrite_applied": false,
+  "should_generate_draft": null,
+  "policy_question_type": "settlement_bank",
+  "reflection_issue_types": [],
+  "graph_status": "ok",
+  "eval_passed": true,
+  "skip_reason": null,
+  "updated_at_utc": "2026-05-26T14:04:21+00:00"
+}

@@ -130,6 +130,8 @@ def build_agentic_assisted_package(
     *,
     settings: AppSettings | None = None,
     graduation_path: Path | str | None = None,
+    conversation_snapshot: Any | None = None,
+    source_mode: str = "historical_replay",
 ) -> AgenticAssistedPackage:
     """Run sandbox graph and wrap results in an operator-assisted review package."""
     cfg = settings or get_settings()
@@ -138,7 +140,12 @@ def build_agentic_assisted_package(
         raise ValueError(reason or "operator-assisted agentic mode not allowed")
 
     runtime = _assisted_runtime_settings(cfg)
-    graph = run_agentic_preview_for_ticket(ticket, settings=runtime)
+    graph = run_agentic_preview_for_ticket(
+        ticket,
+        settings=runtime,
+        conversation_snapshot=conversation_snapshot,
+        source_mode=source_mode,
+    )
     graduation = load_graduation_status(graduation_path)
     package = AgenticAssistedPackage(
         room_id=ticket.room_id,

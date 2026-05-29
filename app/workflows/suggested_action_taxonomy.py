@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from app.workflows.cancellation_request_detection import is_cancellation_request_message
 from app.workflows.vendor_ticket_ai_assist_models import VendorTicketAIAssistActionType
 from app.workflows.vendor_ticket_intent_detection import VendorTicketIntent
 
@@ -155,6 +156,10 @@ _POLICY_ONLY_MARKERS = (
     "چند روز",
     "چه زمانی",
     "آیا می",
+    "کمیسیون",
+    "کارمزد",
+    "هزینه فروش",
+    "درصد",
 )
 
 _INTENTS_WITH_SPECIFIC_ACTION = frozenset(
@@ -170,6 +175,7 @@ _INTENTS_WITH_SPECIFIC_ACTION = frozenset(
         VendorTicketIntent.SETTLEMENT_STATUS_INQUIRY,
         VendorTicketIntent.SELLER_NOTIFICATION,
         VendorTicketIntent.SELLER_OPERATIONAL_REQUEST,
+        VendorTicketIntent.CANCELLATION_REQUEST,
     },
 )
 
@@ -295,6 +301,10 @@ def is_operational_request(
         and seller_operational_request_type != "general_support_request"
     ):
         return True
+    if is_cancellation_request_message(blob):
+        return True
+    if intent == VendorTicketIntent.CANCELLATION_REQUEST:
+        return True
     if intent == VendorTicketIntent.SELLER_OPERATIONAL_REQUEST:
         return True
     if _seller_asks_operational_action(blob):
@@ -354,6 +364,10 @@ def _is_tracking_notification_only(
     *,
     entities: _EntityFields | Any | None,
 ) -> bool:
+    if is_cancellation_request_message(blob):
+        return False
+    if intent == VendorTicketIntent.CANCELLATION_REQUEST:
+        return False
     if intent == VendorTicketIntent.TRACKING_CODE_NOTIFICATION:
         return True
     if intent == VendorTicketIntent.SELLER_NOTIFICATION:
@@ -375,6 +389,7 @@ def _is_policy_question_only(intent: VendorTicketIntent, blob: str) -> bool:
     if intent in (
         VendorTicketIntent.PROHIBITED_GOODS_QUESTION,
         VendorTicketIntent.PRODUCT_PUBLISHING_QUESTION,
+        VendorTicketIntent.COMMISSION_POLICY_QUESTION,
     ):
         return True
     if "؟" in blob or "?" in blob:
@@ -581,6 +596,15 @@ def _refine_request_missing_info_action(
     seller_operational_request_type: str | None,
 ) -> SuggestedActionMapping | None:
     """Prefer operational action over request_missing_info when conceptual intent is clear."""
+    from app.workflows.operational_information_sufficiency import is_seller_panel_issue
+
+    if is_seller_panel_issue(blob, detected_intent=intent.value):
+        return _mapping(
+            SuggestedAction.HUMAN_FOLLOWUP,
+            "panel issue — shop_id in metadata; nazer review",
+            operational_context=True,
+            fallback_reason="panel_issue_human_followup",
+        )
     if _has_any(blob, _RETURN_REFUND_MARKERS):
         return _mapping(
             SuggestedAction.CHECK_RETURN_REQUEST,
@@ -834,6 +858,14 @@ def map_intent_to_suggested_action(
             fallback_reason="complaint_resolution",
         )
 
+    if is_cancellation_request_message(blob) or intent == VendorTicketIntent.CANCELLATION_REQUEST:
+        return _mapping(
+            SuggestedAction.HUMAN_FOLLOWUP,
+            "seller cancellation request",
+            operational_context=True,
+            fallback_reason="cancellation_request",
+        )
+
     if intent == VendorTicketIntent.COMPLAINT_ESCALATION:
         if _complaint_requires_escalation(blob, intent):
             return _mapping(
@@ -937,6 +969,7 @@ def map_intent_to_suggested_action(
     if _is_policy_question_only(intent, blob) or intent in (
         VendorTicketIntent.PROHIBITED_GOODS_QUESTION,
         VendorTicketIntent.PRODUCT_PUBLISHING_QUESTION,
+        VendorTicketIntent.COMMISSION_POLICY_QUESTION,
     ):
         return _mapping(
             SuggestedAction.ANSWER_POLICY_QUESTION,

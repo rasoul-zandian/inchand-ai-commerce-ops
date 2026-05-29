@@ -1,0 +1,14 @@
+{
+  "scenario_id": "product_rejection_clarification",
+  "draft_fingerprint": "dd48b22c58549d113081b0ad065306144a75265ec68356931637381317c8e85a",
+  "detected_intent": "unknown",
+  "suggested_action": "monitor",
+  "reflection_rewrite_applied": false,
+  "should_generate_draft": null,
+  "policy_question_type": "none",
+  "reflection_issue_types": [],
+  "graph_status": "ok",
+  "eval_passed": true,
+  "skip_reason": null,
+  "updated_at_utc": "2026-05-26T14:04:21+00:00"
+}

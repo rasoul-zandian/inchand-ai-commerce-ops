@@ -1,0 +1,16 @@
+{
+  "scenario_id": "delivery_completed_after_support_ask",
+  "draft_fingerprint": "43278f47d89e3039d5b12cf8b2ef0033401e3706dce4945e0abe874308e41e45",
+  "detected_intent": "seller_notification",
+  "suggested_action": "record_update",
+  "reflection_rewrite_applied": true,
+  "should_generate_draft": true,
+  "policy_question_type": "none",
+  "reflection_issue_types": [
+    "missing_operational_ack"
+  ],
+  "graph_status": "ok",
+  "eval_passed": true,
+  "skip_reason": null,
+  "updated_at_utc": "2026-05-26T14:04:21+00:00"
+}

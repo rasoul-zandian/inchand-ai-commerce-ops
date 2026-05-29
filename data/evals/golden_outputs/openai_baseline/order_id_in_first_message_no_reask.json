@@ -1,0 +1,14 @@
+{
+  "scenario_id": "order_id_in_first_message_no_reask",
+  "draft_fingerprint": "f6e5d46cd21e0adc748d5bd182352bfcab010c871c8d493e61a579fb76e6ed7b",
+  "detected_intent": "order_status_review",
+  "suggested_action": "check_order_status",
+  "reflection_rewrite_applied": false,
+  "should_generate_draft": null,
+  "policy_question_type": "none",
+  "reflection_issue_types": [],
+  "graph_status": "ok",
+  "eval_passed": true,
+  "skip_reason": null,
+  "updated_at_utc": "2026-05-26T14:04:21+00:00"
+}

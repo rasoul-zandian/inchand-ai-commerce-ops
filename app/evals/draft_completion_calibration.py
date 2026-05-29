@@ -14,6 +14,7 @@ _INFORMATIONAL_INTENT_VALUES = frozenset(
         VendorTicketIntent.PROHIBITED_GOODS_QUESTION.value,
         VendorTicketIntent.PRODUCT_PUBLISHING_QUESTION.value,
         VendorTicketIntent.SETTLEMENT_STATUS_INQUIRY.value,
+        VendorTicketIntent.COMMISSION_POLICY_QUESTION.value,
     },
 )
 
@@ -45,6 +46,12 @@ _POLICY_QUESTION_MARKERS = (
     "بعد از خرید",
     "پس از خرید",
     "نهایی شدن سفارش",
+    "کمیسیون",
+    "کارمزد",
+    "هزینه فروش",
+    "درصد کمیسیون",
+    "چطور حساب",
+    "چگونه حساب",
 )
 
 _SPECIFIC_DELAY_COMPLAINT_MARKERS = (

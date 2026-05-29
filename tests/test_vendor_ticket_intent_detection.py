@@ -39,11 +39,42 @@ def test_prohibited_goods_question() -> None:
     assert result.detected_intent == VendorTicketIntent.PROHIBITED_GOODS_QUESTION.value
 
 
+def test_commission_policy_question_intent() -> None:
+    result = detect_vendor_ticket_intent("سلام وقت بخیر کمیسیون فروش چند درصده؟")
+    assert result.detected_intent == VendorTicketIntent.COMMISSION_POLICY_QUESTION.value
+
+
 def test_delivery_confirmation_with_multiple_order_ids() -> None:
     text = "تحویل‌شون رو ثبت کنید — سفارش‌های ۱۲۳۴۵۶۷ و ۴۵۶۷۸۹۰"
     result = detect_vendor_ticket_intent(text)
     assert result.detected_intent == VendorTicketIntent.DELIVERY_CONFIRMATION_REQUEST.value
     assert result.extracted_order_ids == ["1234567", "4567890"]
+
+
+def test_cancellation_request_with_order_id() -> None:
+    result = detect_vendor_ticket_intent("سفارش 7367917 لغو شود")
+    assert result.detected_intent == VendorTicketIntent.CANCELLATION_REQUEST.value
+    assert "7367917" in result.extracted_order_ids
+
+
+def test_cancellation_explicit_cancel_phrase() -> None:
+    result = detect_vendor_ticket_intent("لطفا سفارش 7367917 را لغو کنید")
+    assert result.detected_intent == VendorTicketIntent.CANCELLATION_REQUEST.value
+
+
+def test_cancellation_customer_request_phrase() -> None:
+    result = detect_vendor_ticket_intent("مشتری تقاضای لغو دارد سفارش 7367917")
+    assert result.detected_intent == VendorTicketIntent.CANCELLATION_REQUEST.value
+
+
+def test_shipment_notification_not_cancellation() -> None:
+    result = detect_vendor_ticket_intent("سفارش 7367917 ارسال شد")
+    assert result.detected_intent != VendorTicketIntent.CANCELLATION_REQUEST.value
+    assert result.detected_intent in {
+        VendorTicketIntent.SELLER_NOTIFICATION.value,
+        VendorTicketIntent.TRACKING_CODE_NOTIFICATION.value,
+        VendorTicketIntent.ORDER_STATUS_REVIEW.value,
+    }
 
 
 def test_tracking_code_notification() -> None:

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import streamlit as st
 
@@ -24,8 +25,10 @@ from app.evals.draft_quality_slice_analysis import (
 from app.evals.draft_review_metrics import compute_draft_review_metrics
 from app.evals.offline_draft_generation import resolve_draft_generation_mode
 from app.evals.suggested_action_calibration import compute_suggested_action_calibration
-from app.live_feed.ticket_polling import load_recent_operator_payloads, poll_live_ticket_feed
-from app.live_shadow.live_first_turn_shadow_intake import is_live_shadow_intake_recently_active
+from app.live_shadow.live_first_turn_shadow_intake import (
+    is_live_shadow_intake_recently_active,
+    operator_ticket_from_live_ticket,
+)
 from app.operator_console.agentic_assisted_mode import (
     build_agentic_assisted_package,
     get_session_agentic_assisted_package,
@@ -43,6 +46,11 @@ from app.operator_console.agentic_sandbox_preview import (
     run_agentic_preview_for_ticket,
     store_session_agentic_preview,
 )
+from app.operator_console.assisted_ticket_input_builder import (
+    build_assisted_graph_input_from_operator_ticket,
+    build_operator_ticket_from_manual_chat,
+    parity_debug_row_with_settings,
+)
 from app.operator_console.console_loader import (
     DEFAULT_OPERATOR_CONSOLE_DISPLAY_LIMIT_LABEL,
     DEFAULT_REDACTED_TICKETS_PATH,
@@ -54,7 +62,6 @@ from app.operator_console.console_loader import (
     filter_operator_tickets,
     load_conversation_snapshot_index,
     load_operator_tickets,
-    operator_tickets_from_hitl_payloads,
     parse_operator_console_display_limit,
 )
 from app.operator_console.console_models import (
@@ -62,6 +69,7 @@ from app.operator_console.console_models import (
     compute_console_metrics,
     ticket_row_display_label,
 )
+from app.operator_console.datetime_display import format_iso_for_console
 from app.operator_console.draft_preview import (
     DraftPreviewRecord,
     draft_mode_display_label,
@@ -125,6 +133,66 @@ from app.operator_console.intent_display import (
     use_first_turn_entity_display,
 )
 from app.operator_console.knowledge_hints import fetch_knowledge_hints_for_ticket
+from app.operator_console.live_feed_fetch_handler import handle_live_api_feed_fetch
+from app.operator_console.live_feed_loader import (
+    CONSOLE_DATA_SOURCE_SESSION_KEY,
+    DEFAULT_LIVE_API_FEED_PATH,
+    DEFAULT_LIVE_ROOMS_FETCH_LIMIT,
+    ELIGIBILITY_FILTER_OPTIONS,
+    FIRST_SENDER_FILTER_OPTIONS,
+    LATEST_SENDER_FILTER_OPTIONS,
+    LIVE_API_FEED_ELIGIBILITY_FILTER_KEY,
+    LIVE_API_FEED_ENTRIES_SESSION_KEY,
+    LIVE_API_FEED_FIRST_SENDER_FILTER_KEY,
+    LIVE_API_FEED_LAST_FETCH_TIME_SESSION_KEY,
+    LIVE_API_FEED_LAST_REFRESH_SESSION_KEY,
+    LIVE_API_FEED_LATEST_SENDER_FILTER_KEY,
+    LIVE_API_FEED_PATH_SESSION_KEY,
+    LIVE_API_FEED_TICKET_LABEL_FILTER_KEY,
+    SOURCE_HISTORICAL_REPLAY,
+    SOURCE_LIVE_API_FEED,
+    LiveFeedTicketEntry,
+    distinct_live_feed_first_senders,
+    distinct_live_feed_latest_senders,
+    distinct_live_feed_ticket_labels,
+    filter_live_feed_dashboard_entries,
+    live_feed_detail_row_number,
+    load_live_feed_dashboard_entries,
+    resolve_live_feed_filter_selection,
+    resolve_live_feed_list_selection,
+)
+from app.operator_console.manual_chat_sandbox import (
+    MANUAL_TICKET_LABEL_OPTIONS,
+    SESSION_MANUAL_ASSISTED_PACKAGES,
+    SESSION_MANUAL_CHAT_MESSAGES,
+    SESSION_MANUAL_LAST_GENERATION_ERROR,
+    SESSION_MANUAL_ROOM_ID,
+    SESSION_MANUAL_SHOP_ID,
+    SESSION_MANUAL_TICKET_LABEL,
+    SOURCE_MANUAL_SANDBOX_CHAT,
+    TICKET_LABEL_AUTO,
+    clear_manual_auto_run_guards,
+    get_manual_sandbox_assisted_package,
+    handle_manual_add_message,
+    init_manual_chat_session_defaults,
+    load_sample_messages,
+    manual_chat_should_generate_draft,
+    manual_ticket_label_display,
+    messages_from_session,
+    regenerate_latest_ai_reply,
+    remove_last_ai_generated_reply,
+    render_manual_chat_bubble,
+    resolve_manual_ticket_label,
+    save_messages_to_session,
+    store_manual_sandbox_assisted_package,
+)
+from app.operator_console.manual_sandbox_auto_tracking import (
+    get_tracking_result_for_message,
+    render_manual_sandbox_tracking_result_panel,
+)
+from app.operator_console.manual_sandbox_shipment_decision import (
+    render_manual_sandbox_shipment_decision_panel,
+)
 from app.operator_console.rtl_text import format_context_lines, render_rtl_text_block
 from app.tickets.conversation_models import ConversationTicketSnapshot
 
@@ -135,9 +203,10 @@ _DISCLAIMER = (
     "Optional **Submit feedback** writes append-only rows to `reports/operator_feedback.jsonl` "
     "(aggregate labels + note only; not used for training or AI assist)."
 )
-_LIVE_DISCLAIMER = (
-    "**Live feed mode:** read-only JSONL polling. No production DB writes, no auto-routing, "
-    "no customer replies. Enable shadow flags locally for routing/retrieval/assist processing."
+_DATA_SOURCE_OPTIONS: tuple[tuple[str, str], ...] = (
+    (SOURCE_HISTORICAL_REPLAY, "data_source_historical_replay"),
+    (SOURCE_LIVE_API_FEED, "data_source_live_api_feed"),
+    (SOURCE_MANUAL_SANDBOX_CHAT, "data_source_manual_sandbox_chat"),
 )
 
 
@@ -447,13 +516,38 @@ def _render_agentic_preview_review_form(ticket: OperatorTicket) -> None:
     _render_agentic_preview_review_badges(ticket.room_id)
 
 
-def _render_operator_agentic_assisted_mode(ticket: OperatorTicket) -> None:
+def _render_operator_agentic_assisted_mode(
+    ticket: OperatorTicket,
+    *,
+    conversation_snapshot: Any | None = None,
+    multi_turn_should_generate_draft: bool | None = None,
+    multi_turn_skip_reason: str | None = None,
+    assisted_package_getter: Any | None = None,
+    assisted_package_store: Any | None = None,
+    latest_support_skip_message: str | None = None,
+    assisted_run_button_label: str | None = None,
+    manual_assisted_regenerate: Any | None = None,
+    assisted_source_mode: str = "historical_replay",
+) -> None:
     settings = get_settings()
     if not settings.operator_agentic_assisted_mode_enabled:
         return
 
     st.markdown(f"#### {_t('operator_assisted_mode')}")
     st.caption(_t("operator_assisted_caption"))
+
+    if settings.multi_turn_context_enabled and multi_turn_should_generate_draft is False:
+        st.warning(
+            latest_support_skip_message
+            or multi_turn_skip_reason
+            or "Draft generation skipped: latest message is not from seller.",
+        )
+    elif multi_turn_should_generate_draft is False:
+        st.warning(
+            latest_support_skip_message
+            or multi_turn_skip_reason
+            or "Draft generation skipped: latest message is not from seller.",
+        )
 
     allowed, block_reason = is_agentic_assisted_mode_allowed(settings)
     graduation = load_graduation_status()
@@ -468,23 +562,49 @@ def _render_operator_agentic_assisted_mode(ticket: OperatorTicket) -> None:
         )
         return
 
-    run_label = _t("refresh_assisted_package")
-    existing = get_session_agentic_assisted_package(st.session_state, ticket.room_id)
-    if existing is None:
-        run_label = _t("run_assisted_package")
+    get_package = assisted_package_getter or get_session_agentic_assisted_package
+    store_package = assisted_package_store or store_session_agentic_assisted_package
 
-    if st.button(run_label, key=f"agentic_assisted_run_{ticket.room_id}"):
-        try:
-            package = build_agentic_assisted_package(ticket, settings=settings)
-        except ValueError as exc:
-            st.error(f"Assisted package failed safety checks: {exc}")
-        except (OSError, RuntimeError) as exc:
-            st.error(f"Assisted package failed: {exc}")
+    if assisted_run_button_label:
+        run_label = assisted_run_button_label
+    else:
+        run_label = _t("refresh_assisted_package")
+        existing = get_package(st.session_state, ticket.room_id)
+        if existing is None:
+            run_label = _t("run_assisted_package")
+
+    draft_allowed = multi_turn_should_generate_draft is not False
+    if manual_assisted_regenerate is not None:
+        draft_allowed = True
+    if st.button(
+        run_label,
+        key=f"agentic_assisted_run_{ticket.room_id}",
+        disabled=not draft_allowed,
+    ):
+        if manual_assisted_regenerate is not None:
+            result = manual_assisted_regenerate()
+            if result is not None and result.error:
+                st.error(f"{_t('manual_sandbox_generation_error')}: {result.error}")
+            elif result is not None and result.success:
+                st.success(_t("assisted_package_ready"))
+                st.rerun()
         else:
-            store_session_agentic_assisted_package(st.session_state, package)
-            st.success(_t("assisted_package_ready"))
+            try:
+                package = build_agentic_assisted_package(
+                    ticket,
+                    settings=settings,
+                    conversation_snapshot=conversation_snapshot,
+                    source_mode=assisted_source_mode,
+                )
+            except ValueError as exc:
+                st.error(f"Assisted package failed safety checks: {exc}")
+            except (OSError, RuntimeError) as exc:
+                st.error(f"Assisted package failed: {exc}")
+            else:
+                store_package(st.session_state, package)
+                st.success(_t("assisted_package_ready"))
 
-    package = get_session_agentic_assisted_package(st.session_state, ticket.room_id)
+    package = get_package(st.session_state, ticket.room_id)
     if package is None:
         st.info(_t("no_assisted_package"))
         return
@@ -494,6 +614,7 @@ def _render_operator_agentic_assisted_mode(ticket: OperatorTicket) -> None:
         package,
         ticket,
         lang=_lang(),
+        source_mode=assisted_source_mode,
     )
     st.info(_t("assisted_feedback_note"))
 
@@ -839,7 +960,17 @@ def _render_ticket_detail(
     preview_mode: str,
     full_conversation_mode: bool,
     snapshot_index: dict[str, ConversationTicketSnapshot],
+    conversation_snapshot: ConversationTicketSnapshot | None = None,
+    multi_turn_should_generate_draft: bool | None = None,
+    multi_turn_skip_reason: str | None = None,
+    assisted_package_getter: Any | None = None,
+    assisted_package_store: Any | None = None,
+    latest_support_skip_message: str | None = None,
+    assisted_run_button_label: str | None = None,
+    manual_assisted_regenerate: Any | None = None,
+    assisted_source_mode: str = "historical_replay",
 ) -> None:
+    row_number = max(1, row_number or 1)
     st.subheader(ticket_row_display_label(row_number, ticket))
     st.markdown("#### Ticket")
     st.markdown(
@@ -892,7 +1023,18 @@ def _render_ticket_detail(
     _render_knowledge_hints(ticket)
     _render_internal_draft_suggestion(ticket)
     _render_agentic_sandbox_preview(ticket)
-    _render_operator_agentic_assisted_mode(ticket)
+    _render_operator_agentic_assisted_mode(
+        ticket,
+        conversation_snapshot=conversation_snapshot,
+        multi_turn_should_generate_draft=multi_turn_should_generate_draft,
+        multi_turn_skip_reason=multi_turn_skip_reason,
+        assisted_package_getter=assisted_package_getter,
+        assisted_package_store=assisted_package_store,
+        latest_support_skip_message=latest_support_skip_message,
+        assisted_run_button_label=assisted_run_button_label,
+        manual_assisted_regenerate=manual_assisted_regenerate,
+        assisted_source_mode=assisted_source_mode,
+    )
     st.markdown("#### Operator feedback (local JSONL)")
     st.caption(
         "Persists to `reports/operator_feedback.jsonl` — no ticket text, transcript, "
@@ -931,23 +1073,692 @@ def _render_ticket_detail(
             st.success(f"Feedback saved (`{short_id}…`). Not used for auto-learning or send.")
 
 
-def _load_live_tickets(*, source_path: str, use_checkpoint: bool) -> list[OperatorTicket]:
+def _data_source_label(source_key: str) -> str:
+    for value, i18n_key in _DATA_SOURCE_OPTIONS:
+        if value == source_key:
+            return _t(i18n_key)
+    return source_key
+
+
+def _init_console_data_source() -> str:
+    if CONSOLE_DATA_SOURCE_SESSION_KEY not in st.session_state:
+        st.session_state[CONSOLE_DATA_SOURCE_SESSION_KEY] = SOURCE_HISTORICAL_REPLAY
+    return str(st.session_state[CONSOLE_DATA_SOURCE_SESSION_KEY])
+
+
+def _skip_reason_display(skip_reason: str | None) -> str:
+    if not skip_reason:
+        return "—"
+    key = f"live_feed_skip_{skip_reason}"
+    translated = translate_console(key, _lang())
+    if translated != key:
+        return translated
+    return skip_reason
+
+
+def _reload_live_api_feed_entries(source_path: Path) -> list[LiveFeedTicketEntry]:
+    entries = load_live_feed_dashboard_entries(source_path)
+    st.session_state[LIVE_API_FEED_ENTRIES_SESSION_KEY] = entries
+    st.session_state[LIVE_API_FEED_LAST_REFRESH_SESSION_KEY] = (
+        datetime.now(tz=UTC).replace(microsecond=0).isoformat()
+    )
+    st.session_state[LIVE_API_FEED_PATH_SESSION_KEY] = str(source_path)
+    return entries
+
+
+def _format_live_feed_timestamp(iso_value: str | None) -> str:
+    return format_iso_for_console(iso_value, _lang())
+
+
+def _live_feed_eligibility_badge(entry: LiveFeedTicketEntry) -> str:
+    if entry.eligible:
+        return _t("live_feed_badge_eligible")
+    reason = _skip_reason_display(entry.skip_reason)
+    return f"{_t('live_feed_badge_skipped')}: {reason}"
+
+
+def _live_feed_row_label(index: int, entry: LiveFeedTicketEntry) -> str:
+    label = entry.ticket_label or "—"
+    updated = _format_live_feed_timestamp(entry.updated_at_iso)
+    sender = entry.first_sender or "—"
+    badge = _live_feed_eligibility_badge(entry)
+    return f"#{index} — {entry.room_id} · {updated} · {label} · {sender} · {badge}"
+
+
+def _render_live_feed_ticket_card(entry: LiveFeedTicketEntry) -> None:
+    updated = _format_live_feed_timestamp(entry.updated_at_iso)
+    sender = _display(entry.first_sender)
+    badge = _live_feed_eligibility_badge(entry)
+    st.markdown(
+        f"**{entry.room_id}** · `{updated}` · **{entry.ticket_label or '—'}** · "
+        f"{_t('live_feed_first_sender')}: {sender} · {badge}",
+    )
+    preview = entry.seller_preview
+    if preview:
+        st.caption(preview[:220] + ("…" if len(preview) > 220 else ""))
+
+
+def _init_live_feed_filter_session(
+    key: str,
+    options: list[str],
+) -> list[str]:
+    if key not in st.session_state:
+        st.session_state[key] = list(options)
+    stored = st.session_state.get(key, [])
+    if isinstance(stored, list) and stored:
+        return [value for value in stored if value in options]
+    return list(options)
+
+
+def _render_live_feed_sidebar_filters(
+    entries: list[LiveFeedTicketEntry],
+) -> list[LiveFeedTicketEntry]:
+    st.sidebar.markdown("---")
+    label_options = distinct_live_feed_ticket_labels(entries)
+    if not label_options:
+        label_options = ["unknown"]
+    label_default = _init_live_feed_filter_session(
+        LIVE_API_FEED_TICKET_LABEL_FILTER_KEY,
+        label_options,
+    )
+    selected_labels = st.sidebar.multiselect(
+        _t("live_feed_filter_ticket_label"),
+        options=label_options,
+        default=label_default,
+        key="live_api_feed_ticket_label_multiselect",
+    )
+    st.session_state[LIVE_API_FEED_TICKET_LABEL_FILTER_KEY] = selected_labels
+
+    eligibility_options = list(ELIGIBILITY_FILTER_OPTIONS)
+    eligibility_default = _init_live_feed_filter_session(
+        LIVE_API_FEED_ELIGIBILITY_FILTER_KEY,
+        eligibility_options,
+    )
+    selected_eligibility = st.sidebar.multiselect(
+        _t("live_feed_filter_eligibility"),
+        options=eligibility_options,
+        default=eligibility_default,
+        format_func=lambda value: (
+            _t("live_feed_eligibility_eligible")
+            if value == "eligible"
+            else _skip_reason_display(value)
+        ),
+        key="live_api_feed_eligibility_multiselect",
+    )
+    st.session_state[LIVE_API_FEED_ELIGIBILITY_FILTER_KEY] = selected_eligibility
+
+    present_senders = distinct_live_feed_first_senders(entries)
+    sender_options = [sender for sender in FIRST_SENDER_FILTER_OPTIONS if sender in present_senders]
+    if not sender_options:
+        sender_options = list(FIRST_SENDER_FILTER_OPTIONS)
+    sender_default = _init_live_feed_filter_session(
+        LIVE_API_FEED_FIRST_SENDER_FILTER_KEY,
+        sender_options,
+    )
+    selected_senders = st.sidebar.multiselect(
+        _t("live_feed_filter_first_sender"),
+        options=sender_options,
+        default=sender_default,
+        key="live_api_feed_first_sender_multiselect",
+    )
+    st.session_state[LIVE_API_FEED_FIRST_SENDER_FILTER_KEY] = selected_senders
+
+    present_latest = distinct_live_feed_latest_senders(entries)
+    latest_options = [sender for sender in LATEST_SENDER_FILTER_OPTIONS if sender in present_latest]
+    if not latest_options:
+        latest_options = list(LATEST_SENDER_FILTER_OPTIONS)
+    latest_default = _init_live_feed_filter_session(
+        LIVE_API_FEED_LATEST_SENDER_FILTER_KEY,
+        latest_options,
+    )
+    selected_latest = st.sidebar.multiselect(
+        "Latest sender",
+        options=latest_options,
+        default=latest_default,
+        key="live_api_feed_latest_sender_multiselect",
+    )
+    st.session_state[LIVE_API_FEED_LATEST_SENDER_FILTER_KEY] = selected_latest
+
+    label_filter = resolve_live_feed_filter_selection(
+        selected_labels,
+        all_options=label_options,
+    )
+    eligibility_filter = resolve_live_feed_filter_selection(
+        selected_eligibility,
+        all_options=eligibility_options,
+    )
+    sender_filter = resolve_live_feed_filter_selection(
+        selected_senders,
+        all_options=sender_options,
+    )
+    latest_filter = resolve_live_feed_filter_selection(
+        selected_latest,
+        all_options=latest_options,
+    )
+    return filter_live_feed_dashboard_entries(
+        entries,
+        ticket_labels=label_filter,
+        eligibility_reasons=eligibility_filter,
+        first_senders=sender_filter,
+        latest_senders=latest_filter,
+    )
+
+
+def _render_live_feed_metadata(entry: LiveFeedTicketEntry, *, settings: Any | None = None) -> None:
+    cfg = settings or get_settings()
+    st.markdown(f"#### {_t('live_feed_metadata_title')}")
+    if entry.eligible:
+        st.caption(_t("live_feed_hitl_required"))
+    cols = st.columns(3)
+    cols[0].metric(_t("live_feed_source_system"), _display(entry.source_system))
+    cols[1].metric(_t("live_feed_updated_at"), _format_live_feed_timestamp(entry.updated_at_iso))
+    cols[2].metric(_t("live_feed_created_at"), _format_live_feed_timestamp(entry.created_at_iso))
+    cols2 = st.columns(3)
+    cols2[0].metric(_t("live_feed_message_count"), entry.message_count)
+    cols2[1].metric(_t("live_feed_first_sender"), _display(entry.first_sender))
+    cols2[2].metric(_t("live_feed_latest_sender"), _display(entry.latest_sender))
+    cols3 = st.columns(3)
+    if entry.eligible:
+        cols3[0].metric(_t("live_feed_eligibility_reason"), _t("live_feed_badge_eligible"))
+    else:
+        cols3[0].metric(
+            _t("live_feed_eligibility_reason"),
+            _skip_reason_display(entry.skip_reason),
+        )
+    if (
+        cfg.multi_turn_context_enabled
+        and entry.ticket is not None
+        and entry.ticket.snapshot is not None
+    ):
+        from app.workflows.multi_turn_ticket_context import build_multi_turn_context
+
+        ctx = build_multi_turn_context(entry.ticket.snapshot, settings=cfg)
+        cols3[1].metric("pending_request_type", _display(ctx.pending_request_type))
+        cols3[2].metric(
+            "pending_request_fulfilled",
+            "yes" if ctx.pending_request_fulfilled else "no",
+        )
+        st.caption(
+            f"should_generate_draft: {'yes' if ctx.should_generate_draft else 'no'}"
+            + (f" · skip: {ctx.should_skip_reason}" if ctx.should_skip_reason else ""),
+        )
+    if entry.parse_error:
+        st.warning(entry.parse_error)
+
+
+def _manual_ticket_label_select_label(value: str) -> str:
+    if value == TICKET_LABEL_AUTO:
+        return _t("manual_sandbox_ticket_label_auto")
+    return _t(f"manual_sandbox_ticket_label_{value}")
+
+
+def _render_manual_sandbox_chat_panel() -> None:
     settings = get_settings()
+    init_manual_chat_session_defaults(st.session_state)
+    st.markdown(_t("manual_sandbox_disclaimer"))
+
+    label_values = [value for value, _ in MANUAL_TICKET_LABEL_OPTIONS]
+    current_label = str(st.session_state.get(SESSION_MANUAL_TICKET_LABEL, TICKET_LABEL_AUTO))
+    if current_label not in label_values:
+        current_label = TICKET_LABEL_AUTO
+    with st.sidebar.expander(_t("manual_sandbox_ticket_label"), expanded=True):
+        selected_label = st.selectbox(
+            _t("manual_sandbox_ticket_label"),
+            options=label_values,
+            index=label_values.index(current_label),
+            format_func=_manual_ticket_label_select_label,
+            key="manual_sandbox_ticket_label_select",
+        )
+        st.session_state[SESSION_MANUAL_TICKET_LABEL] = selected_label
+        st.session_state[SESSION_MANUAL_ROOM_ID] = st.text_input(
+            _t("manual_sandbox_room_id"),
+            value=str(st.session_state.get(SESSION_MANUAL_ROOM_ID, "")),
+            key="manual_sandbox_room_id_input",
+        )
+        st.session_state[SESSION_MANUAL_SHOP_ID] = st.text_input(
+            _t("manual_sandbox_shop_id"),
+            value=str(st.session_state.get(SESSION_MANUAL_SHOP_ID, "")),
+            key="manual_sandbox_shop_id_input",
+        )
+        if st.button("Use test shop_id", key="manual_sandbox_use_test_shop_id_btn"):
+            st.session_state[SESSION_MANUAL_SHOP_ID] = "manual-sandbox-shop"
+            st.rerun()
+
+    room_id = str(st.session_state.get(SESSION_MANUAL_ROOM_ID, "")).strip()
+    shop_id = str(st.session_state.get(SESSION_MANUAL_SHOP_ID, "")).strip() or None
+    st.caption(
+        "شناسه فروشگاه در context موجود است: " + ("بله" if bool(shop_id) else "خیر"),
+    )
+    if not shop_id:
+        st.warning("shop_id در context موجود نیست؛ ممکن است مدل شناسه فروشگاه بخواهد.")
+    explicit_label = resolve_manual_ticket_label(
+        str(st.session_state.get(SESSION_MANUAL_TICKET_LABEL)),
+    )
+
+    messages = messages_from_session(st.session_state.get(SESSION_MANUAL_CHAT_MESSAGES))
+    st.markdown("#### Manual sandbox chat")
+    ai_label = _t("manual_sandbox_ai_reply_label")
+    if messages:
+        bubbles = "".join(
+            render_manual_chat_bubble(message, ai_reply_label=ai_label) for message in messages
+        )
+        st.markdown(bubbles, unsafe_allow_html=True)
+        render_manual_sandbox_tracking_result_panel(st, st.session_state, messages)
+        render_manual_sandbox_shipment_decision_panel(st, st.session_state, messages)
+    else:
+        st.info(_t("manual_sandbox_no_messages"))
+
+    gen_error = st.session_state.get(SESSION_MANUAL_LAST_GENERATION_ERROR)
+    if gen_error:
+        st.error(f"{_t('manual_sandbox_generation_error')}: {gen_error}")
+
+    role = st.radio(
+        "Role",
+        options=["seller", "support_agent"],
+        format_func=lambda value: (
+            _t("manual_sandbox_role_seller")
+            if value == "seller"
+            else _t("manual_sandbox_role_support")
+        ),
+        horizontal=True,
+        key="manual_sandbox_role_radio",
+    )
+    draft_text = st.text_area(
+        "Message",
+        height=120,
+        placeholder=_t("manual_sandbox_message_placeholder"),
+        key="manual_sandbox_message_input",
+    )
+    col_add, col_clear, col_sample = st.columns(3)
+    with col_add:
+        if st.button(_t("manual_sandbox_add_message"), key="manual_sandbox_add_message_btn"):
+            result = handle_manual_add_message(
+                st.session_state,
+                role=role,
+                text=draft_text,
+                room_id=room_id,
+                ticket_label=explicit_label,
+                shop_id=shop_id,
+                settings=settings,
+            )
+            if result is not None and result.error:
+                st.error(f"{_t('manual_sandbox_generation_error')}: {result.error}")
+            elif result is not None and result.success and result.error is None:
+                pass
+            elif result is not None and not result.success:
+                st.error(result.error or _t("manual_sandbox_generation_error"))
+            st.rerun()
+    with col_clear:
+        if st.button(_t("manual_sandbox_clear_chat"), key="manual_sandbox_clear_chat_btn"):
+            st.session_state[SESSION_MANUAL_CHAT_MESSAGES] = []
+            bucket = st.session_state.get(SESSION_MANUAL_ASSISTED_PACKAGES)
+            if isinstance(bucket, dict):
+                bucket.clear()
+            clear_manual_auto_run_guards(st.session_state)
+            st.rerun()
+    with col_sample:
+        if st.button(_t("manual_sandbox_load_sample"), key="manual_sandbox_load_sample_btn"):
+            st.session_state[SESSION_MANUAL_CHAT_MESSAGES] = [
+                message.to_dict() for message in load_sample_messages()
+            ]
+            clear_manual_auto_run_guards(st.session_state)
+            st.rerun()
+
+    col_regen, col_remove = st.columns(2)
+    with col_regen:
+        if st.button(
+            _t("manual_sandbox_regenerate_ai_reply"),
+            key="manual_sandbox_regenerate_ai_reply_btn",
+            disabled=not messages,
+        ):
+            regen_messages = messages_from_session(
+                st.session_state.get(SESSION_MANUAL_CHAT_MESSAGES),
+            )
+            regen_result = regenerate_latest_ai_reply(
+                regen_messages,
+                room_id=room_id,
+                ticket_label=explicit_label,
+                shop_id=shop_id,
+                session_state=st.session_state,
+                settings=settings,
+            )
+            if regen_result.ai_message is not None:
+                save_messages_to_session(st.session_state, regen_messages)
+            if regen_result.error:
+                st.error(f"{_t('manual_sandbox_generation_error')}: {regen_result.error}")
+            st.rerun()
+    with col_remove:
+        if st.button(
+            _t("manual_sandbox_remove_last_ai_reply"),
+            key="manual_sandbox_remove_last_ai_reply_btn",
+            disabled=not messages,
+        ):
+            remove_messages = messages_from_session(
+                st.session_state.get(SESSION_MANUAL_CHAT_MESSAGES),
+            )
+            if remove_last_ai_generated_reply(remove_messages):
+                save_messages_to_session(st.session_state, remove_messages)
+            st.rerun()
+
+    if not messages:
+        return
     try:
-        if use_checkpoint:
-            batch = poll_live_ticket_feed(settings=settings, source_path=source_path)
-        else:
-            batch = load_recent_operator_payloads(settings=settings, source_path=source_path)
+        ticket, snapshot = build_operator_ticket_from_manual_chat(
+            messages,
+            room_id=room_id,
+            ticket_label=explicit_label,
+            shop_id=shop_id,
+        )
+        assisted_input_bundle = build_assisted_graph_input_from_operator_ticket(
+            ticket,
+            conversation_snapshot=snapshot,
+            source_mode="manual_sandbox_chat",
+            settings=settings,
+        )
     except ValueError as exc:
         st.error(str(exc))
-        return []
-    tickets = operator_tickets_from_hitl_payloads(batch.operator_payloads)
-    tickets.sort(key=lambda item: item.room_id, reverse=True)
-    st.caption(
-        f"Live batch: {batch.new_count} new / {batch.fetched_count} fetched "
-        f"(source: {settings.live_feed_source_path})"
+        return
+    label_display = manual_ticket_label_display(
+        str(st.session_state.get(SESSION_MANUAL_TICKET_LABEL, TICKET_LABEL_AUTO)),
+        snapshot,
     )
-    return tickets
+    st.markdown("---")
+    st.markdown(
+        f"- **room_id:** {_display(ticket.room_id)}\n"
+        f"- **ticket_label:** {_display(label_display)}\n"
+        f"- **source_system:** manual_sandbox_chat"
+    )
+    with st.expander("Input parity / debug"):
+        for key, value in parity_debug_row_with_settings(
+            assisted_input_bundle,
+            settings=settings,
+        ).items():
+            st.markdown(f"- **{key}:** {_display(value)}")
+        package = get_manual_sandbox_assisted_package(st.session_state, room_id)
+        if package is not None:
+            graph = package.graph
+            st.markdown(
+                f"- **reflection_runtime_shop_identity_available:** "
+                f"{_display(getattr(graph, 'reflection_runtime_shop_identity_available', None))}"
+            )
+            st.markdown(
+                f"- **reflection_unnecessary_identifier_detected:** "
+                f"{_display(getattr(graph, 'reflection_unnecessary_identifier_detected', None))}"
+            )
+            st.markdown(
+                f"- **reflection_rewrite_applied:** "
+                f"{_display(getattr(graph, 'reflection_rewrite_applied', None))}"
+            )
+        if shop_id:
+            masked = f"****{shop_id[-4:]}" if len(shop_id) >= 4 else "****"
+            st.markdown(f"- **shop_id_masked:** {masked}")
+        seller_id = None
+        for message in reversed(messages):
+            if message.sender_type == "seller":
+                seller_id = message.message_id
+                break
+        if seller_id:
+            tracking_result = get_tracking_result_for_message(st.session_state, seller_id)
+            if isinstance(tracking_result, dict):
+                meta = tracking_result.get("auto_verification_metadata")
+                if isinstance(meta, dict):
+                    st.markdown("**Tracking auto-verification (manual sandbox)**")
+                    st.markdown(
+                        f"- **auto_verification_attempted:** "
+                        f"{_display(meta.get('auto_verification_attempted'))}"
+                    )
+                    st.markdown(
+                        f"- **carrier_candidate:** {_display(meta.get('carrier_candidate'))}"
+                    )
+                    st.markdown(f"- **verified:** {_display(meta.get('verified'))}")
+                    st.markdown(f"- **event_count:** {_display(meta.get('event_count'))}")
+                    st.markdown(f"- **error_type:** {_display(meta.get('error_type'))}")
+                    extraction_dbg = meta.get("extraction_diagnostics")
+                    if isinstance(extraction_dbg, dict):
+                        st.markdown("**دیباگ استخراج کد رهگیری / Tracking extraction debug**")
+                        for key in (
+                            "original_seller_text_length",
+                            "numeric_candidates_found",
+                            "selected_tracking_code",
+                            "selected_candidate_reason",
+                            "api_code_field",
+                            "payload_trace_number",
+                            "payload_package_number",
+                            "extraction_source_message_id",
+                            "extraction_source_sender_type",
+                        ):
+                            if key in extraction_dbg:
+                                st.markdown(
+                                    f"- **{key}:** {_display(extraction_dbg.get(key))}",
+                                )
+                        if extraction_dbg.get("normalized_candidates"):
+                            st.markdown(
+                                "- **normalized_candidates:** "
+                                f"{_display(extraction_dbg.get('normalized_candidates'))}",
+                            )
+                        rejected = extraction_dbg.get("rejected_candidates")
+                        if isinstance(rejected, list) and rejected:
+                            st.markdown("- **rejected_candidates:**")
+                            for item in rejected:
+                                if isinstance(item, dict):
+                                    st.markdown(
+                                        f"  - `{item.get('code', '—')}`: "
+                                        f"{_display(item.get('reason'))}",
+                                    )
+
+    should_generate, skip_reason = manual_chat_should_generate_draft(messages)
+    multi_should_generate: bool | None = should_generate
+    multi_skip: str | None = None
+    if not should_generate and skip_reason == "latest_message_from_support":
+        multi_skip = _t("manual_sandbox_latest_support_skip")
+    elif not should_generate:
+        multi_skip = _t("manual_sandbox_no_messages")
+
+    if settings.multi_turn_context_enabled:
+        from app.workflows.multi_turn_ticket_context import build_multi_turn_context
+
+        multi_ctx = build_multi_turn_context(snapshot, settings=settings)
+        multi_should_generate = multi_ctx.should_generate_draft
+        if not multi_ctx.should_generate_draft:
+            multi_skip = multi_ctx.should_skip_reason or multi_skip
+
+    def _manual_regenerate_from_details() -> object:
+        regen_messages = messages_from_session(
+            st.session_state.get(SESSION_MANUAL_CHAT_MESSAGES),
+        )
+        regen_result = regenerate_latest_ai_reply(
+            regen_messages,
+            room_id=room_id,
+            ticket_label=explicit_label,
+            shop_id=shop_id,
+            session_state=st.session_state,
+            settings=settings,
+        )
+        if regen_result.ai_message is not None:
+            save_messages_to_session(st.session_state, regen_messages)
+        return regen_result
+
+    snapshot_index = {snapshot.room_id: snapshot}
+    _render_ticket_detail(
+        ticket,
+        row_number=1,
+        preview_mode="Open ticket snapshot",
+        full_conversation_mode=True,
+        snapshot_index=snapshot_index,
+        conversation_snapshot=assisted_input_bundle.display_snapshot,
+        multi_turn_should_generate_draft=multi_should_generate,
+        multi_turn_skip_reason=multi_skip,
+        assisted_package_getter=get_manual_sandbox_assisted_package,
+        assisted_package_store=store_manual_sandbox_assisted_package,
+        latest_support_skip_message=_t("manual_sandbox_latest_support_skip"),
+        assisted_run_button_label=_t("manual_sandbox_regenerate_ai_reply"),
+        manual_assisted_regenerate=_manual_regenerate_from_details,
+        assisted_source_mode="manual_sandbox_chat",
+    )
+
+
+def _render_live_api_feed_panel() -> None:
+    settings = get_settings()
+    st.markdown(_t("live_api_feed_disclaimer"))
+    default_path = Path(settings.live_feed_source_path or str(DEFAULT_LIVE_API_FEED_PATH))
+    live_path = Path(
+        st.sidebar.text_input(
+            _t("live_feed_jsonl_path"),
+            value=str(st.session_state.get(LIVE_API_FEED_PATH_SESSION_KEY, default_path)),
+        ),
+    )
+
+    if st.sidebar.button(_t("live_feed_fetch_button"), key="live_api_feed_fetch"):
+        with st.spinner(_t("live_feed_fetch_spinner")):
+            fetch_result = handle_live_api_feed_fetch(
+                st.session_state,
+                feed_path=live_path,
+                settings=settings,
+                limit=settings.live_rooms_api_fetch_limit or DEFAULT_LIVE_ROOMS_FETCH_LIMIT,
+                reload_fn=_reload_live_api_feed_entries,
+            )
+        if fetch_result.success:
+            st.sidebar.success(
+                _t("live_feed_fetch_success").format(count=fetch_result.tickets_written),
+            )
+            st.sidebar.metric(_t("live_feed_fetch_rooms_metric"), fetch_result.rooms_fetched)
+            st.sidebar.metric(_t("live_feed_ticket_count"), fetch_result.tickets_written)
+            if fetch_result.validation_passed is not None:
+                validation_label = _t("live_feed_fetch_validation_metric") + (
+                    " ✓" if fetch_result.validation_passed else " ✗"
+                )
+                st.sidebar.metric(validation_label, fetch_result.valid_rows or 0)
+                if fetch_result.invalid_rows:
+                    st.sidebar.metric(
+                        _t("live_feed_fetch_invalid_rows_metric"),
+                        fetch_result.invalid_rows,
+                    )
+            if fetch_result.fetch_warnings:
+                st.sidebar.metric(
+                    _t("live_feed_fetch_warnings_metric"),
+                    len(fetch_result.fetch_warnings),
+                )
+        else:
+            st.sidebar.error(fetch_result.error_message or _t("live_feed_fetch_failed"))
+
+    if st.sidebar.button(_t("live_feed_reload_button"), key="live_api_feed_reload"):
+        if not live_path.is_file():
+            st.sidebar.error(f"{_t('live_feed_file_missing')}: {live_path}")
+        else:
+            try:
+                _reload_live_api_feed_entries(live_path)
+            except (OSError, ValueError) as exc:
+                st.sidebar.error(str(exc))
+
+    last_fetch_time = st.session_state.get(LIVE_API_FEED_LAST_FETCH_TIME_SESSION_KEY)
+    if last_fetch_time:
+        st.sidebar.caption(
+            f"{_t('live_feed_fetch_last_time')}: "
+            f"{format_iso_for_console(str(last_fetch_time), _lang())}",
+        )
+
+    entries: list[LiveFeedTicketEntry] = st.session_state.get(LIVE_API_FEED_ENTRIES_SESSION_KEY, [])
+    if not entries and live_path.is_file():
+        try:
+            entries = _reload_live_api_feed_entries(live_path)
+        except (OSError, ValueError) as exc:
+            st.error(str(exc))
+            return
+    elif not entries and not live_path.is_file():
+        st.error(f"{_t('live_feed_file_missing')}: {live_path}")
+        st.caption(_t("live_feed_fetch_button"))
+        return
+
+    total = len(entries)
+    eligible_count = sum(1 for entry in entries if entry.eligible)
+    st.sidebar.metric(_t("live_feed_ticket_count"), total)
+    st.sidebar.metric(_t("live_feed_eligible_count"), eligible_count)
+    last_refresh = st.session_state.get(LIVE_API_FEED_LAST_REFRESH_SESSION_KEY)
+    if last_refresh:
+        st.sidebar.caption(
+            f"{_t('live_feed_last_refresh')}: {format_iso_for_console(str(last_refresh), _lang())}",
+        )
+
+    filtered_entries = _render_live_feed_sidebar_filters(entries)
+    st.sidebar.metric(_t("live_feed_filtered_count"), len(filtered_entries))
+
+    if not entries:
+        st.warning(_t("live_feed_no_entries"))
+        return
+
+    if not filtered_entries:
+        st.info("No tickets match the current live feed filters.")
+        return
+
+    row_labels = [
+        _live_feed_row_label(index, entry) for index, entry in enumerate(filtered_entries, start=1)
+    ]
+    select_key = "live_api_feed_select_ticket"
+    selection = resolve_live_feed_list_selection(
+        row_labels,
+        st.session_state.get(select_key),
+    )
+    if selection is None:
+        return
+    selected_index, resolved_label = selection
+    if st.session_state.get(select_key) != resolved_label:
+        st.session_state[select_key] = resolved_label
+    selected_label = st.selectbox(
+        _t("live_feed_select_ticket"),
+        row_labels,
+        index=selected_index,
+        key=select_key,
+    )
+    selected_index = row_labels.index(selected_label)
+    entry = filtered_entries[selected_index]
+    row_number = live_feed_detail_row_number(selected_index)
+
+    st.markdown(f"#### {_t('live_feed_ticket_card_title')}")
+    _render_live_feed_ticket_card(entry)
+
+    preview = entry.seller_preview
+    if preview:
+        st.markdown(f"**{_t('live_feed_seller_preview')}**")
+        st.text(preview[:400])
+
+    _render_live_feed_metadata(entry, settings=settings)
+
+    if entry.ticket is None:
+        st.info(_skip_reason_display(entry.skip_reason))
+        return
+
+    try:
+        ticket = operator_ticket_from_live_ticket(entry.ticket)
+    except ValueError as exc:
+        st.error(str(exc))
+        return
+
+    full_conversation_mode = st.sidebar.checkbox(
+        "Full conversation mode",
+        value=True,
+        help="Show full thread from live feed JSONL (local/private dev).",
+    )
+    snapshot_index = _get_conversation_snapshot_index(live_path) if full_conversation_mode else {}
+    snapshot = entry.ticket.snapshot if entry.ticket is not None else None
+    multi_should_generate: bool | None = None
+    multi_skip: str | None = None
+    if settings.multi_turn_context_enabled and snapshot is not None:
+        from app.workflows.multi_turn_ticket_context import build_multi_turn_context
+
+        multi_ctx = build_multi_turn_context(snapshot, settings=settings)
+        multi_should_generate = multi_ctx.should_generate_draft
+        multi_skip = multi_ctx.should_skip_reason
+    _render_ticket_detail(
+        ticket,
+        row_number=row_number,
+        preview_mode="Open ticket snapshot",
+        full_conversation_mode=full_conversation_mode,
+        snapshot_index=snapshot_index,
+        conversation_snapshot=snapshot,
+        multi_turn_should_generate_draft=multi_should_generate,
+        multi_turn_skip_reason=multi_skip,
+        assisted_source_mode="live_api_feed",
+    )
 
 
 def _render_feedback_sidebar_summary() -> None:
@@ -1021,17 +1832,10 @@ def _render_ticket_browser(
             DEFAULT_OPERATOR_CONSOLE_DISPLAY_LIMIT_LABEL,
         ),
     )
-    if data_mode == "Live":
-        settings = get_settings()
-        st.sidebar.caption(
-            f"Live polling batch size: {settings.live_feed_max_batch} "
-            "(LIVE_FEED_MAX_BATCH). Display limit applies after load."
-        )
-    else:
-        st.sidebar.caption(
-            f"Showing {len(tickets)} tickets after first-vendor filter "
-            f"({first_vendor_stats.total_loaded} loaded from replay).",
-        )
+    st.sidebar.caption(
+        f"Showing {len(tickets)} tickets after first-vendor filter "
+        f"({first_vendor_stats.total_loaded} loaded from replay).",
+    )
 
     labels = distinct_ticket_labels(tickets)
     actions = distinct_suggested_actions(tickets)
@@ -1087,51 +1891,25 @@ def main() -> None:
         st.caption("Live shadow intake active (read-only first-turn evaluation).")
 
     settings = get_settings()
-    mode_options = ["Replay"]
-    if settings.live_feed_enabled:
-        mode_options.append("Live")
-    data_mode = st.sidebar.radio(_t("sidebar_data_source"), mode_options, horizontal=True)
+    current_source = _init_console_data_source()
+    source_values = [value for value, _ in _DATA_SOURCE_OPTIONS]
+    source_index = source_values.index(current_source) if current_source in source_values else 0
+    selected_source = st.sidebar.radio(
+        _t("sidebar_data_source"),
+        options=source_values,
+        format_func=_data_source_label,
+        index=source_index,
+        horizontal=True,
+        key="operator_console_data_source_radio",
+    )
+    st.session_state[CONSOLE_DATA_SOURCE_SESSION_KEY] = selected_source
 
-    if data_mode == "Live":
-        st.markdown(_LIVE_DISCLAIMER)
-        live_path = st.sidebar.text_input(
-            "Live feed JSONL",
-            value=settings.live_feed_source_path,
-        )
-        use_checkpoint = st.sidebar.checkbox("Incremental checkpoint", value=True)
-        poll_seconds = st.sidebar.number_input(
-            "Auto-refresh (seconds)",
-            min_value=settings.live_feed_poll_interval_seconds,
-            value=settings.live_feed_poll_interval_seconds,
-            step=5,
-        )
-        if st.sidebar.button("Refresh now"):
-            st.session_state["live_refresh_nonce"] = (
-                st.session_state.get("live_refresh_nonce", 0) + 1
-            )
+    if selected_source == SOURCE_LIVE_API_FEED:
+        _render_live_api_feed_panel()
+        return
 
-        @st.fragment(run_every=timedelta(seconds=int(poll_seconds)))
-        def _live_panel() -> None:
-            _ = st.session_state.get("live_refresh_nonce", 0)
-            path = Path(live_path)
-            if not path.is_file():
-                st.error(f"Live feed file not found: {path}")
-                return
-            tickets = _load_live_tickets(
-                source_path=live_path,
-                use_checkpoint=use_checkpoint,
-            )
-            if not tickets:
-                st.warning("No new tickets in live feed.")
-                return
-            _render_ticket_browser(
-                tickets,
-                data_mode="Live",
-                conversation_source_path=live_path,
-                first_vendor_snapshot_path=str(DEFAULT_REDACTED_TICKETS_PATH),
-            )
-
-        _live_panel()
+    if selected_source == SOURCE_MANUAL_SANDBOX_CHAT:
+        _render_manual_sandbox_chat_panel()
         return
 
     default_path = DEFAULT_REPLAY_PATH
@@ -1167,7 +1945,7 @@ def main() -> None:
 
     _render_ticket_browser(
         tickets,
-        data_mode="Replay",
+        data_mode="Historical replay",
         conversation_source_path=conversation_path,
         first_vendor_snapshot_path=conversation_path,
     )

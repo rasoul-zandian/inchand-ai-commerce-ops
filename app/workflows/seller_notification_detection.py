@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from app.workflows.cancellation_request_detection import is_cancellation_request_message
 from app.workflows.operational_entity_extraction import (
     extract_operational_entities,
     normalize_digits,
@@ -207,6 +208,16 @@ def detect_seller_notification(text: str) -> SellerNotificationDetectionResult:
         )
 
     normalized = normalize_persian_arabic_digits(cleaned)
+    if is_cancellation_request_message(normalized):
+        return SellerNotificationDetectionResult(
+            seller_intent=None,
+            notification_type=None,
+            operational_request_type=None,
+            entities=SellerNotificationEntities(),
+            confidence_band="low",
+            reasons=["cancellation_request_preempts_notification"],
+        )
+
     reasons: list[str] = []
     order_ids = extract_order_ids(normalized)
     tracking_code = _first_tracking_code(normalized)

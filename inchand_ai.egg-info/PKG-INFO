@@ -6,6 +6,7 @@ Author: Inchand
 License: Proprietary
 Requires-Python: >=3.11
 Description-Content-Type: text/markdown
+Requires-Dist: jdatetime>=5.0
 Requires-Dist: fastapi>=0.115
 Requires-Dist: langchain-core>=0.3
 Requires-Dist: langgraph>=0.2
@@ -16,10 +17,12 @@ Requires-Dist: psycopg[binary]>=3.2
 Requires-Dist: sqlalchemy>=2.0
 Requires-Dist: uvicorn[standard]>=0.30
 Provides-Extra: dev
+Requires-Dist: jdatetime>=5.0; extra == "dev"
 Requires-Dist: pytest>=8.0; extra == "dev"
 Requires-Dist: pytest-asyncio>=0.24; extra == "dev"
 Requires-Dist: ruff>=0.8; extra == "dev"
 Provides-Extra: operator
+Requires-Dist: jdatetime>=5.0; extra == "operator"
 Requires-Dist: streamlit>=1.40; extra == "operator"
 
 # Inchand AI — Commerce Operations Copilot (MVP)
@@ -1026,7 +1029,551 @@ PYTHONPATH=. python3.11 scripts/build_shadow_retrieval_metrics_dashboard.py \
 
 **HITL read-only visibility contract (Steps 150–153):** [`docs/operations/hitl_read_only_visibility_contract.md`](docs/operations/hitl_read_only_visibility_contract.md) — allowlisted aggregate fields + reviewer boundaries; payload builder `app/hitl/hitl_payload_builder.py`; sample CLI `scripts/build_hitl_read_only_payload_sample.py`; local mock preview `scripts/render_hitl_read_only_panel_preview.py` → `reports/hitl_read_only_panel_preview.md`. **HITL preview batch report (Step 153):** [`docs/operations/hitl_read_only_preview_report.md`](docs/operations/hitl_read_only_preview_report.md). **Not** production UI, **not** draft/final consumption, **not** customer-facing.
 
-**Internal operator console (Steps 154–155):** Streamlit MVP at `app/operator_console/` — review vendor tickets with AI assist + retrieval summaries (aggregate only). **Replay mode:** `reports/ai_assist_shadow_replay_v1.jsonl`. **Live mode:** read-only JSONL polling via `app/live_feed/` (`LIVE_FEED_ENABLED=true`). **Internal only** — no auth, no persisted notes, no production DB writes, no customer send.
+**Internal operator console (Steps 154–160, 167–168):** Streamlit MVP at `app/operator_console/` — review vendor tickets with AI assist + retrieval summaries. **Open ticket snapshot (default):** first vendor issue + latest vendor message + up to three lines of recent non-internal context before that turn (`app/live_feed/open_ticket_snapshot.py`) — no post-vendor support leakage, max 600 chars combined across the three body fields; **recent context** is shown **line-by-line** (vendor / support / finance labels) with **RTL-safe** HTML for Persian and mixed Persian/Latin/numbers (`app/operator_console/rtl_text.py`). **Historical preview:** legacy `ticket_text_preview` (latest seller line only), also RTL-wrapped in the UI. **Seller message class (Step 169, shadow/HITL only):** deterministic **`seller_notification`** vs **`seller_operational_request`** from safe preview text (`app/workflows/seller_notification_detection.py`). Notifications (e.g. shipment + tracking reported) map to `record_update`; operational asks (بررسی کنید / پیگیری کنید / …) map to `human_followup` or `review_product_status`. Uses operational entity extraction for 7-digit order IDs and carrier-aware tracking codes (see below). **Read-only** — **no** production order mutation, approval changes, auto-send, or external APIs.
+
+**Suggested action taxonomy v1 (Step 180, advisory only):** `app/workflows/suggested_action_taxonomy.py` maps `detected_intent`, optional `conceptual_intent_fa`, extracted entities, and ticket labels to a richer **`suggested_action`** enum (e.g. `update_delivery_status`, `check_order_status`, `check_product_approval`, `answer_policy_question`, `request_missing_info`). Legacy values (`monitor`, `billing_review`, `human_followup`, `record_update`, …) remain valid. **`suggested_action_reason`** explains the mapping in the operator console and HITL export. **No action execution** — suggestions only; operators decide what to do.
+
+**Operational intent taxonomy v1 (Step 170, shadow/HITL only):** broader **rule-based** intents for operator review (`app/workflows/vendor_ticket_intent_detection.py`) — e.g. `settlement_status_inquiry`, `settlement_panel_access_issue`, `product_approval_review`, `tracking_code_notification`, `complaint_escalation`. **Distinct from `ticket_label`:** coarse routing labels (`support` / `complaint` / `fund`) stay as-is; **`detected_intent`** is a finer operational category derived from Persian keywords + Step 169 seller detection (composed, not duplicated). Taxonomy v1 is **deterministic and reviewable** — **no LLM classifier** yet. AI assist shadow exports safe fields: `detected_intent`, `intent_confidence_band`, `intent_reasons_summary`, `intent_related_document_types` (plus Step 169 compat fields). Operator console shows intent, confidence, reasons, and related policy doc types under **Operational intent (taxonomy v1)**. **Replay JSONL from before Step 170** lacks those columns — the console **backfills** them from safe preview text when loading (`app/operator_console/intent_enrichment.py`), or re-export:
+
+**Operational entity extraction (deterministic, shadow/HITL only):** `app/workflows/operational_entity_extraction.py` extracts **order IDs** (canonical `INC-` + 7 digits; any standalone exact 7-digit number with digit boundaries — in Inchand there is no separate complaint ID format; complaint numbers like `8201241` are order IDs; higher confidence near order/action keywords such as سفارش، تحویل، ارسال، برگشت، لغو، کنسل، رهگیری، شکایت; medium when standalone), **product IDs** (exactly 8 digits near product keywords — 7-digit spans are never product IDs), and **tracking codes** (Iran Post: 24 digits near post/tracking words; Tipax: 15–25 digits with `تیپاکس`; Chapar: 17 digits with `چاپار`; no 7-digit submatches inside longer digit runs). Persian/Arabic/English digits normalized. Flags **incomplete** 6-digit order candidates and **ambiguous** numbers with Persian warnings (`شماره سفارش ناقص احتمالی`, `شماره نامشخص`). **Boundaries:** no external APIs, no order/product existence checks, no mutations, no delivery-status updates, no customer send, **no LLM extraction**, no full transcripts in prompts. Step 169/170 integrations preserve compat fields `extracted_order_ids` / `extracted_tracking_code` and add `extracted_product_ids`, `extracted_tracking_carrier`, `entity_warnings_summary` where safe. Operator console **Extracted entities (AI assist)** shows order/product/tracking + carrier + warnings. Offline draft prompts may cite extracted entities **without claiming verification**.
+
+```bash
+LANGGRAPH_SANDBOX_RETRIEVAL_ENABLED=true \
+VENDOR_TICKET_AI_ASSIST_SHADOW_ENABLED=true \
+PYTHONPATH=. python3.11 scripts/export_ai_assist_shadow_replay_jsonl.py \
+  data/private/vendor_tickets_400.redacted.jsonl \
+  --namespace vendor_ticket_real_pilot_balanced \
+  --index-version pilot_balanced_v1 \
+  --confirm-sandbox --overwrite
+```
+
+**Full conversation mode (operator console only):** default **on** in Streamlit — loads redacted ticket JSONL (`data/private/vendor_tickets_400.redacted.jsonl` or sidebar path) and shows the **full** vendor/support/finance thread via `app/operator_console/full_ticket_view.py` (PII redacted, multiline preserved, **no** character truncation, system/internal messages excluded). **Compact preview mode** keeps existing truncated HITL fields (400/600-char budgets) for exports, governance, and JSONL payloads. **Knowledge hints (Steps 167–168, optional):** read-only **official policy** snippets from sandbox pgvector (`KNOWLEDGE_HINTS_ENABLED=true`; `app/operator_console/knowledge_hints.py` + Step 166 retrieval tool). Hint queries still use truncated safe snapshot fields — **not** the full thread. **Domain normalization (Step 168):** deterministic Persian synonym/misspelling fixes before retrieval (`app/knowledge/domain_query_normalization.py` — e.g. `تصفیه پنل` → `تسویه حساب فروشنده`) plus small `intent:` / route `boost:` phrases for fund/billing tickets; **no LLM rewrite**. **Local sandbox only** (`knowledge_operations_sandbox` / `knowledge_v1_openai`); **not** used for draft/final responses or customer send. **Replay mode:** `reports/ai_assist_shadow_replay_v1.jsonl` (snapshots enriched from redacted export). **Live mode:** read-only JSONL polling (`LIVE_FEED_ENABLED=true`). **Operator feedback:** optional append-only `reports/operator_feedback.jsonl` (aggregate fields + short internal note only; not used for training or AI assist). **Internal only** — no auth, no production DB writes, no customer send.
+
+```bash
+# Optional policy hints (local sandbox DB + OpenAI query embeddings)
+KNOWLEDGE_HINTS_ENABLED=true PYTHONPATH=. python3.11 scripts/run_operator_console.py
+```
+
+**Historical reply benchmark (Step 161, offline only):** build evaluation rows from **redacted** vendor ticket JSONL (`data/private/vendor_tickets_400.redacted.jsonl` by default). Each case links an **open-ticket-style snapshot before reply** (`original_vendor_issue_preview`, `latest_vendor_message`, `recent_context_preview`) to the **next human** `support_agent` / `finance_agent` message as `gold_reference_reply` (truncated, PII-checked). Outputs stay under **gitignored** `reports/` (`historical_reply_benchmark_v1.jsonl`, `historical_reply_benchmark_summary.json`). **Does not** generate model replies or send customer messages — dataset prep only (`app/evals/historical_reply_benchmark.py`).
+
+```bash
+PYTHONPATH=. python3.11 scripts/build_historical_reply_benchmark.py --overwrite
+```
+
+**First-turn benchmark mode (recommended for draft eval):** one case per room when the **first non-internal message** is from the seller and a later `support_agent` / `finance_agent` reply exists (`--case-mode first_vendor_turn`). This avoids the noisy **all_adjacent_pairs** expansion (~1386 cases from 166 rooms). Default CLI mode remains `all_adjacent_pairs` for backward compatibility.
+
+```bash
+# 1) Build first-turn benchmark (~one row per room)
+PYTHONPATH=. python3.11 scripts/build_historical_reply_benchmark.py \
+  --case-mode first_vendor_turn \
+  --output reports/historical_reply_benchmark_first_turn_v1.jsonl \
+  --summary-output reports/historical_reply_benchmark_first_turn_summary.json \
+  --overwrite
+
+# 2) Offline drafts (mock or OpenAI)
+PYTHONPATH=. python3.11 scripts/generate_offline_draft_suggestions.py \
+  --input reports/historical_reply_benchmark_first_turn_v1.jsonl \
+  --output reports/offline_draft_suggestions_first_turn_v1.jsonl \
+  --summary-output reports/offline_draft_suggestions_first_turn_summary.json \
+  --overwrite
+
+# 3) Deterministic draft vs gold metrics
+PYTHONPATH=. python3.11 scripts/evaluate_offline_draft_suggestions.py \
+  --drafts reports/offline_draft_suggestions_first_turn_v1.jsonl \
+  --benchmark reports/historical_reply_benchmark_first_turn_v1.jsonl \
+  --output reports/offline_draft_evaluation_first_turn_v1.json \
+  --markdown-output reports/offline_draft_evaluation_first_turn_v1.md \
+  --overwrite
+```
+
+**Offline draft suggestions (Step 171, evaluation only):** generate **internal-only** Persian draft reply suggestions for historical benchmark cases (`app/evals/offline_draft_generation.py`). **First-turn isolation (Steps 175 + 179, default):** `DRAFT_GENERATION_MODE=first_turn_only` (`app/evals/draft_generation_mode.py`) calibrates drafts as **first support replies**. **`build_first_turn_draft_context`** (`app/evals/first_turn_draft_context.py`) forces intent detection, **entity extraction** (`entity_source=original_vendor_issue_preview`), conceptual intent, and sandbox **policy hint queries** to use **only** `original_vendor_issue_preview` — not `latest_vendor_message`, `recent_context_preview`, `open_ticket_preview`, `ticket_text_preview`, or precomputed entities from full-thread HITL rows. Leakage guards (`app/evals/draft_prompt_leakage.py`) fail if later-thread-only order/product/tracking values appear in prompts. **Draft style (Step 179):** `DRAFT_STYLE=operational_short` (`app/evals/draft_style.py`) — target ≤180 chars, hard max 300, max 2 sentences; bans generic fluff phrases; stores `draft_style`, `draft_char_count`, `draft_style_ok`, `draft_style_warnings` on offline rows and operator preview. Multi-turn **`live_thread_context`** mode exists for future work but is **not** active. Optional safe audit: `--write-prompt-audit` → `reports/offline_draft_prompt_audit.jsonl` (metadata only — **no** full prompt bodies). Gold human replies are **evaluation-only** (Step 172 metrics), not prompt inputs. Outputs (gitignored): `reports/offline_draft_suggestions_v1.jsonl`, `reports/offline_draft_suggestions_summary.json`. **Not** sent to customers, **not** wired to `final_response` or production `RAG_PROFILE`. Default CI/tests use **mock** LLM; real OpenAI requires `--provider openai --confirm-real-openai` and `OPENAI_API_KEY`.
+
+**Internal draft preview + regenerate (Step 173, operator console only):** `app/operator_console/draft_preview.py` loads offline JSONL (e.g. `reports/offline_draft_suggestions_first_turn_v1.jsonl`) and shows an **Internal draft suggestion** block in Streamlit with caption *Internal preview only — not sent to customer.* UI shows **Draft mode: First-turn only**, **Entity source: original_vendor_issue_preview**, **Draft style: operational_short**, length, and style validation status (Step 179). **Conceptual intent (Steps 176–177, exploratory):** each generated draft may include `conceptual_intent_fa` — a short Persian label (≤4 words) for operator review (`app/evals/conceptual_intent_fa.py`). Labels are calibrated toward **operational request phrasing** (what the seller wants support to **do**, e.g. ثبت تحویل سفارش) rather than topic summaries (e.g. استعلام وضعیت سفارش). Rule-assisted hints (`extract_operational_request_phrase`) and validation reject overly generic labels when a specific request is detectable. **Rule-based `detected_intent` remains authoritative** for workflow/routing; conceptual labels are **not** used for actions yet. Future work: aggregate reviewed `conceptual_intent_fa` values into a candidate taxonomy dictionary (not auto-written today). **Generate new draft** regenerates via OpenAI into **session_state only** (no JSONL append, no DB, no production ticket writeback, no customer send). Flags (default **off**): `OPERATOR_DRAFT_PREVIEW_ENABLED`, `OPERATOR_DRAFT_GENERATION_ENABLED`, `OPERATOR_DRAFT_MODEL=gpt-4o-mini`, `OPERATOR_DRAFT_MAX_CHARS=700`, `DRAFT_GENERATION_MODE=first_turn_only`, `SHOW_GOLD_REPLY_IN_CONSOLE=false`. Regeneration uses first-turn isolated prompts — **no** gold reply, thread history, or retrieval hit bodies. Unsafe drafts are rejected via `assert_draft_reply_safe()`.
+
+**First-turn draft entity isolation (operator console):** in `DRAFT_GENERATION_MODE=first_turn_only`, internal draft prompts, the **Extracted entities (first-turn only)** section, and **Draft entities (first-turn only)** all use `original_vendor_issue_preview` only. The entity leakage guard only fails when a value appears in the **assembled draft prompt** and is extracted from later/open fields but **not** as literal text in `original_vendor_issue_preview` (complaint numbers like `8201241` in the first message are allowed). On failure, the error names `leaked_value` and `source_field` (e.g. `latest_vendor_message`, `open_ticket_preview`) without printing the full prompt — not `OperatorTicket.extracted_order_ids` from open snapshot/AI assist. Open-snapshot / AI-assist entity fields remain available under **Open snapshot entities (debug)** in the console. In `live_thread_context` mode the main entity section uses open-snapshot fields as before. Debug: `PYTHONPATH=. python3.11 scripts/debug_first_turn_ticket_context.py --room-id <ROOM> --redacted-jsonl data/private/vendor_tickets_400.redacted.jsonl --replay-jsonl reports/ai_assist_shadow_replay_v1.jsonl` (outputs `first_turn_display_entities`, `open_snapshot_entities`, `draft_context_entities`).
+
+**First-vendor-only console filtering (Step 182, operator console only):** when `OPERATOR_FIRST_VENDOR_ONLY=true` (default), the operator console lists only rooms where the **first non-internal message** is from **seller/vendor** (`app/operator_console/first_vendor_filter.py`). Rooms opened by `support_agent` or `finance_agent` are hidden from listing, sidebar counts, and draft review navigation. Uses the redacted tickets JSONL snapshot index by `room_id`; **does not** delete or rewrite benchmark/replay JSONL rows. Purpose: first-turn seller-initiated support calibration. Set `OPERATOR_FIRST_VENDOR_ONLY=false` to restore the previous all-rooms listing.
+
+**Human draft review feedback (Step 181, operator console only):** structured scoring for internal drafts via `app/operator_console/draft_review_feedback.py` — checkboxes (intent/action/entities correct, draft usable, too verbose, hallucination) plus optional short notes (≤300 chars). **Append-only** local log: `reports/draft_review_feedback.jsonl` (gitignored). Sidebar shows reviewed count, usable %, hallucination %, and verbosity % from local JSONL only. Session badges after submit: ✅ good draft / ⚠️ verbose / ⚠️ hallucination risk. **Purpose:** offline behavior calibration and taxonomy/draft quality review — **no** auto-training, **no** automatic prompt or taxonomy updates, **no** customer send, **no** full prompts or transcripts stored.
+
+**Informational reply completion calibration (Step 184, draft generation only):** `app/evals/draft_completion_calibration.py` reduces unnecessary operational follow-up filler on **informational** seller questions (policy, settlement timing, publishing rules). When the draft already answers the question and no human review/action is implied by `suggested_action`, trailing wait/review sentences (e.g. «لطفا صبر کنید»، «در حال بررسی»، «به تیم مربوطه ارجاع شد») are **not** appended — prompt instructions plus optional deterministic stripping of a **trailing** filler sentence only. Operational/escalation tickets (`human_followup`, `escalate`, `check_order_status`, …) still allow follow-up closure. **No** auto-send, **no** retrieval changes, **no** global rewrite of all drafts. Draft review metrics track `unnecessary_followup_detected` when operators submit reviews.
+
+**Draft review metrics report (Step 183, evaluation only):** `app/evals/draft_review_metrics.py` aggregates `reports/draft_review_feedback.jsonl` into calibration insights — overall rates (usable, hallucination, verbosity, intent/action/entity accuracy), breakdowns by `detected_intent`, `conceptual_intent_fa`, `suggested_action`, and `ticket_label`, plus top failure patterns (checkbox + short note heuristics) and reviewer-note themes. **Evaluation-driven calibration** — metrics are **local/offline only** (gitignored `reports/draft_review_metrics_summary.json` and `reports/draft_review_metrics_report.md`); **no** automatic learning, prompt mutation, taxonomy changes, or production analytics. Build after ~10–20 manual reviews:
+
+```bash
+PYTHONPATH=. python3.11 scripts/build_draft_review_metrics_report.py --overwrite
+```
+
+**Suggested action mapping refinement v1 (Step 186, deterministic only):** `app/workflows/suggested_action_taxonomy.py` reduces **monitor** overuse — `monitor` is reserved for passive greetings, status-less notifications, and unclear low-action text. Operational signals (ask verbs, operational `conceptual_intent_fa`, extracted entities, Step 169 seller operational request types, specific intents) **suppress** monitor fallback and prefer actions such as `update_delivery_status`, `check_product_approval`, `check_settlement_status`, `human_followup`, or `record_update`. Mapping metadata: `monitor_blocked_by_operational_signals`, `fallback_reason` (calibration visibility only). **No** action execution or automatic taxonomy deployment.
+
+**Monitor boundary refinement (Step 188, deterministic only):** Step 187 showed most action mismatches were **`monitor` on operational tickets**. `should_suppress_monitor()` blocks monitor when conceptual stems imply operations (ثبت/تایید/پیگیری/مرجوع/شکایت/…), when `general_vendor_support` pairs with operational `conceptual_intent_fa`, or when entities + ask verbs appear. Suppressed monitor maps to a **specific** advisory action (`check_product_approval`, `check_return_request`, `check_order_status`, `human_followup`, …); `request_missing_info` is refined when conceptual intent is already clear. **`monitor`** remains for greeting-only and vague passive notifications. Metadata: `monitor_suppressed`, `monitor_suppression_reason`. **Advisory only** — no action execution.
+
+**Suggested action calibration report (Step 185, evaluation only):** `app/evals/suggested_action_calibration.py` analyzes `suggested_action` quality from the same draft review JSONL — action accuracy rate, weakest actions/intents, monitor and `human_followup` usage, **fallback overuse** (operational conceptual intent paired with `monitor`/`human_followup`), mismatch patterns, and **advisory** `suggested_mapping_adjustments` (not applied automatically). Outputs: `reports/suggested_action_calibration_summary.json` and `reports/suggested_action_calibration_report.md`. Use when draft quality is strong but **action accuracy** is the weakest metric. **No** auto-mapping changes, action execution, or production workflow updates.
+
+```bash
+PYTHONPATH=. python3.11 scripts/build_suggested_action_calibration_report.py --overwrite
+```
+
+**Action mismatch deep analysis (Step 187, evaluation only):** `app/evals/action_mismatch_analysis.py` explains **why** `action_accuracy_rate` may drop after Step 186 specificity increases — top wrong predicted actions, intent/conceptual mismatch slices, **confusion pairs** (predicted → inferred expected from reviewer note/conceptual hints), and **ambiguous action boundaries** (e.g. `billing_review` vs `check_settlement_status`). Outputs: `reports/action_mismatch_analysis_summary.json` and `reports/action_mismatch_analysis_report.md`. **Advisory only** — guides the next manual taxonomy refinement; does not change mappings.
+
+```bash
+PYTHONPATH=. python3.11 scripts/build_action_mismatch_analysis.py --overwrite
+```
+
+**Agentic workflow sandbox (Step 193, orchestration only):** `app/agentic_sandbox/` compiles a **linear LangGraph** that orchestrates existing safe components (first-turn context → intent → entities → knowledge hints → suggested action → actionability → draft → safety gate → HITL handoff). **Not** autonomous execution: `execution_allowed=false`, `customer_send_allowed=false`, `human_review_required=true` always. Does **not** replace `app/graph/main_graph.py` or operator console yet. Plan: [docs/operations/agentic_workflow_sandbox_plan.md](docs/operations/agentic_workflow_sandbox_plan.md).
+
+```bash
+PYTHONPATH=. python3.11 scripts/run_agentic_sandbox_workflow.py \
+  --room-id <ROOM_ID> --provider mock --overwrite
+```
+
+**Agentic sandbox visualization & LangSmith tracing (Step 194, observability only):** Render the sandbox LangGraph as Mermaid/markdown (`reports/agentic_sandbox_graph.mmd`, `reports/agentic_sandbox_graph.md`; optional PNG when renderer deps exist). Optional LangSmith tracing via `--enable-langsmith` or `LANGSMITH_TRACING_ENABLED=true` — requires `LANGSMITH_API_KEY` at runtime (never committed); runs continue without tracing if the key is missing.
+
+```bash
+PYTHONPATH=. python3.11 scripts/render_agentic_sandbox_graph.py --overwrite
+
+LANGSMITH_API_KEY=... \
+PYTHONPATH=. python3.11 scripts/run_agentic_sandbox_workflow.py \
+  --room-id 7743 \
+  --replay-jsonl reports/ai_assist_shadow_replay_v1.jsonl \
+  --redacted-jsonl data/private/vendor_tickets_400.redacted.jsonl \
+  --provider mock \
+  --enable-langsmith \
+  --langsmith-project inchand-agentic-sandbox \
+  --overwrite
+```
+
+Run JSON reports include `langsmith_tracing_enabled`, `langsmith_project`, and `langsmith_run_note` (no LangSmith URLs or secrets).
+
+**Agentic sandbox batch report (Step 195, observability only):** Runs the sandbox graph in batch for **first-vendor rooms only** (seller/vendor first meaningful sender; excludes support/finance-first). Writes safe per-room rows (no full draft text), aggregate summary, and markdown report.
+
+```bash
+PYTHONPATH=. python3.11 scripts/run_agentic_sandbox_batch_report.py \
+  --replay-jsonl reports/ai_assist_shadow_replay_v1.jsonl \
+  --redacted-jsonl data/private/vendor_tickets_400.redacted.jsonl \
+  --provider mock \
+  --limit 20 \
+  --overwrite
+```
+
+Outputs: `reports/agentic_sandbox_batch_runs.jsonl`, `reports/agentic_sandbox_batch_summary.json`, `reports/agentic_sandbox_batch_report.md`. Not wired to operator console or production graph.
+
+**Agentic sandbox readiness analysis (Step 196, analytics only):** After a batch run, `app/agentic_sandbox/agentic_readiness_analysis.py` classifies each room into readiness buckets (ready for human review, missing identifier, knowledge review, node error, safety failed, draft missing/invalid), computes per-node success/error rates, and lists inspection targets. Validates sandbox workflow readiness without changing graph logic, draft generation, or operator console wiring.
+
+```bash
+PYTHONPATH=. python3.11 scripts/build_agentic_sandbox_readiness_report.py --overwrite
+```
+
+Outputs: `reports/agentic_sandbox_readiness_summary.json`, `reports/agentic_sandbox_readiness_report.md`. Safe fields only — no full draft text, prompts, or transcripts.
+
+**Agentic knowledge hint coverage (Step 197, diagnostics only):** `app/agentic_sandbox/knowledge_hint_coverage_analysis.py` explains why policy-relevant sandbox runs return zero knowledge hints. Detects policy relevance from intent/action/label signals, infers likely gap reasons (missing query terms, index gap, filter strictness, normalization, action/intent mismatch), and lists inspection targets. **Analytics only** — no retrieval ranking, embedding, index, or draft changes.
+
+```bash
+PYTHONPATH=. python3.11 scripts/build_agentic_knowledge_hint_coverage_report.py --overwrite
+```
+
+Outputs: `reports/agentic_knowledge_hint_coverage_summary.json`, `reports/agentic_knowledge_hint_coverage_report.md`.
+
+**Agentic batch knowledge hints smoke (Step 198, sandbox batch only):** `--enable-knowledge-hints` on `run_agentic_sandbox_batch_report.py` runs the sandbox graph with `knowledge_hints_enabled=true` (default remains **false** for safe batch baselines). Batch JSONL rows include `knowledge_hint_count` and `knowledge_hint_document_types` only — no raw snippets or retrieval query text. Batch summary adds `knowledge_hint_coverage_rate` for policy-relevant rooms.
+
+```bash
+PYTHONPATH=. python3.11 scripts/run_agentic_sandbox_batch_report.py \
+  --replay-jsonl reports/ai_assist_shadow_replay_v1.jsonl \
+  --redacted-jsonl data/private/vendor_tickets_400.redacted.jsonl \
+  --provider mock \
+  --limit 20 \
+  --enable-knowledge-hints \
+  --overwrite
+
+PYTHONPATH=. python3.11 scripts/build_agentic_knowledge_hint_coverage_report.py --overwrite
+```
+
+**Operator console agentic sandbox preview (Step 199, optional):** When `OPERATOR_AGENTIC_SANDBOX_PREVIEW_ENABLED=true`, the internal console shows an **Agentic sandbox preview** section per ticket with **Run sandbox graph**. It runs the existing `app/agentic_sandbox/` LangGraph (first-turn only) into Streamlit `session_state` only — no DB writes, no send, no production graph. Default provider is **mock** (`OPERATOR_AGENTIC_SANDBOX_PROVIDER=mock`); knowledge hints follow `OPERATOR_AGENTIC_SANDBOX_KNOWLEDGE_HINTS_ENABLED` (default true). UI shows node statuses, intent/action, actionability, safe entity counts, hint document types, and draft length — **not** draft text, prompts, transcripts, or retrieval snippets. Distinct from **Internal draft suggestion** (offline JSONL / session regenerate).
+
+```bash
+OPERATOR_AGENTIC_SANDBOX_PREVIEW_ENABLED=true \
+OPERATOR_AGENTIC_SANDBOX_PROVIDER=mock \
+OPERATOR_AGENTIC_SANDBOX_KNOWLEDGE_HINTS_ENABLED=true \
+PYTHONPATH=. python3.11 scripts/run_operator_console.py
+```
+
+**Agentic sandbox preview HITL review (Step 200, evaluation only):** Under **Agentic sandbox preview**, operators can submit structured graph-level feedback (intent/action/actionability/entities/hints/safety/readiness/draft length/overall usefulness) to `reports/agentic_preview_review_feedback.jsonl`. Sidebar shows aggregate usefulness and correctness rates from local JSONL only. **No auto-learning**, graph changes, or customer send.
+
+```bash
+OPERATOR_AGENTIC_SANDBOX_PREVIEW_ENABLED=true \
+OPERATOR_AGENTIC_SANDBOX_PROVIDER=mock \
+PYTHONPATH=. python3.11 scripts/run_operator_console.py
+```
+
+**Agentic preview review metrics report (Step 201, analytics only):** `app/agentic_sandbox/preview_review_metrics.py` aggregates operator sandbox preview review feedback from `reports/agentic_preview_review_feedback.jsonl` into JSON + markdown metrics (usefulness, graph-dimension accuracy, knowledge helpfulness, safety/readiness, top issue counts, weakest dimensions, optional breakdowns by `room_id` / `detected_intent` / `suggested_action` when present or joinable from batch runs). Outputs: `reports/agentic_preview_review_metrics_summary.json` and `reports/agentic_preview_review_metrics_report.md`. **Analytics only** — no graph logic changes, no auto-learning, no prompts/transcripts/snippets/draft text in reports.
+
+```bash
+PYTHONPATH=. python3.11 scripts/build_agentic_preview_review_metrics_report.py --overwrite
+```
+
+**Agentic sandbox graduation criteria (Step 205, governance only):** `app/agentic_sandbox/graduation_criteria.py` aggregates existing sandbox reports (readiness, knowledge coverage, preview review metrics, optional console/graph consistency, optional draft review metrics) into an explicit **graduation decision**: `not_ready`, `conditionally_ready`, or `ready_for_operator_assisted_phase`. Evaluates safety enforcement (no execution/send), preview usefulness, intent/action accuracy, policy coverage, human-review readiness, and consistency mismatch rates. Outputs guardrails and recommended next phase — **no production execution**, no auto-send, no workflow changes.
+
+```bash
+PYTHONPATH=. python3.11 scripts/build_agentic_sandbox_graduation_report.py --overwrite
+```
+
+Outputs: `reports/agentic_sandbox_graduation_summary.json` and `reports/agentic_sandbox_graduation_report.md`.
+
+**Manual sandbox chat room (Step 222, operator console only):** Third sidebar data source — **Manual sandbox chat** / FA «چت آزمایشی دستی» — for local seller/support conversation simulation without live API dependency. Module: `app/operator_console/manual_chat_sandbox.py`. Build multi-turn `ConversationTicketSnapshot` messages (`source_system=manual_sandbox_chat`) and run **Operator-assisted agentic mode** with the same detail panels as historical replay / live feed (intent, draft, reflection comparison, safety flags, technical expander). **Optional `ticket_label`:** auto/unset (no forced category; metadata `ticket_label_source=manual_unset`) or explicit complaint / fund / support. Role-colored chat bubbles (seller blue `#E8F1FF`, support green `#EAF8EA`), RTL-safe HTML. **No send, no live ticket mutation, no write APIs** — caption: «این یک شبیه‌سازی محلی است و هیچ پیامی به اینچند ارسال نمی‌شود.» Manual chat transcripts stay in **session-only** keys (`manual_sandbox_*`); not written to reports/JSONL by default. Assisted run is disabled when the latest meaningful message is from support.
+
+```bash
+MULTI_TURN_CONTEXT_ENABLED=true \
+OPERATOR_AGENTIC_ASSISTED_MODE_ENABLED=true \
+OPERATOR_AGENTIC_ASSISTED_PROVIDER=openai \
+OPERATOR_AGENTIC_ASSISTED_KNOWLEDGE_HINTS_ENABLED=true \
+FINAL_DRAFT_REFLECTION_ENABLED=true \
+FINAL_DRAFT_REFLECTION_PROVIDER=rule_based \
+PYTHONPATH=. python3.11 scripts/run_operator_console.py
+```
+
+Sidebar: **Data source → Manual sandbox chat**. Use for single-turn/multi-turn draft testing, optional `ticket_label` routing, and reflection before/after review. Adding a **seller** message auto-runs the assisted package and appends the final draft as an **AI suggested reply** support bubble (session-only; dedupe guards prevent rerun loops on Streamlit refresh). Human **support** messages do not auto-run. Optional **Regenerate latest AI reply** replaces the trailing AI bubble; **Remove last AI reply** drops it from the local thread.
+
+**Parity with historical/live assisted mode:** Manual sandbox uses the same canonical builder (`app/operator_console/assisted_ticket_input_builder.py`) as replay/live. For apples-to-apples comparisons: select the **same `ticket_label`**, ensure the **latest meaningful sender is seller**, and remember historical replay does not pass a conversation snapshot (first-turn path) until the thread has human support or multiple seller turns. AI-generated support bubbles stay in the UI thread but are excluded from entity extraction and pending-request detection. Debug divergent drafts via the console **Input parity / debug** expander or:
+
+```bash
+PYTHONPATH=. python3.11 scripts/compare_manual_vs_replay_assisted_input.py \
+  --room-id 7743 \
+  --manual-text "..." \
+  --ticket-label complaint \
+  --provider mock \
+  --overwrite
+```
+
+Outputs: `reports/manual_vs_replay_assisted_input_<room_id>.json` and `.md` (fingerprints/lengths only — no raw prompts).
+
+**Operator-assisted agentic mode (Step 206, HITL-only):** When `OPERATOR_AGENTIC_ASSISTED_MODE_ENABLED=true`, the operator console shows an **Operator-assisted agentic mode** section (distinct from **Agentic sandbox preview**). The sandbox LangGraph builds a **structured operator work package** in Streamlit `session_state` only — checklist plus safe graph metadata (intent, action, actionability, entities, hint document types, draft length, safety flags). **Graduation gate:** when `OPERATOR_AGENTIC_ASSISTED_REQUIRE_GRADUATION_READY=true` (default), reads `reports/agentic_sandbox_graduation_summary.json` and requires `overall_status=ready_for_operator_assisted_phase`; otherwise the section shows a warning and run stays disabled (console keeps working). **No execution, no customer send, no ticket mutation, no production graph.** Reuse **Sandbox preview review** feedback for graph evaluation (`reports/agentic_preview_review_feedback.jsonl`).
+
+```bash
+OPERATOR_AGENTIC_ASSISTED_MODE_ENABLED=true \
+OPERATOR_AGENTIC_ASSISTED_PROVIDER=mock \
+OPERATOR_AGENTIC_ASSISTED_KNOWLEDGE_HINTS_ENABLED=true \
+PYTHONPATH=. python3.11 scripts/run_operator_console.py
+```
+
+Config: `OPERATOR_AGENTIC_ASSISTED_MODE_ENABLED` (default false), `OPERATOR_AGENTIC_ASSISTED_PROVIDER` (mock), `OPERATOR_AGENTIC_ASSISTED_KNOWLEDGE_HINTS_ENABLED` (default true), `OPERATOR_AGENTIC_ASSISTED_REQUIRE_GRADUATION_READY` (default true). Module: `app/operator_console/agentic_assisted_mode.py`.
+
+**Operator console draft display + FA/EN UI (Step 207):** The internal Streamlit console defaults to **FA** (`st.session_state["operator_console_lang"]`). A top-level **فارسی / English** toggle switches Persian labels + **full RTL layout** (sidebar on the **right**, right-aligned widgets/text) vs English labels + default LTR. `app/operator_console/i18n.py` provides translations and `apply_console_direction_css()`. **Agentic sandbox preview** and **Operator-assisted agentic mode** show validated **internal draft text** (after `assert_draft_reply_safe` and `safety_status=passed`) with captions «این متن فقط برای بررسی اپراتور است…» / “Internal review only — not sent to the vendor.” Mock drafts are labeled. Still **no customer send**, no execution, no raw prompts/transcripts/snippets. Module: `app/operator_console/agentic_draft_display.py`.
+
+**Operator-assisted review metrics (Step 207b, analytics only):** `app/operator_console/agentic_assisted_review_metrics.py` aggregates operator-assisted workflow quality from sandbox preview review feedback (`reports/agentic_preview_review_feedback.jsonl`) plus optional assisted extension (`reports/operator_assisted_review_feedback.jsonl`). Reports usefulness, operator trust, dimension accuracy, draft helpfulness, safety confidence, breakdowns by intent/action, weakest dimensions, and top issues — **no prompts, transcripts, snippets, or draft bodies**.
+
+```bash
+PYTHONPATH=. python3.11 scripts/build_operator_assisted_review_metrics_report.py --overwrite
+```
+
+Outputs: `reports/operator_assisted_review_metrics_summary.json` and `reports/operator_assisted_review_metrics_report.md`.
+
+**Operator-assisted UI simplification + mock operational drafts (Step 208):** Operator-assisted mode shows a **concise operational work package** (seller summary, suggested action, information status, extracted IDs, internal draft read-only box, safety flags). Technical graph metadata (node statuses, hint types, char counts, checklist) moves to a collapsed **Technical / diagnostic** expander. Mock sandbox runs use `app/agentic_sandbox/mock_draft_templates.py` (`generate_mock_operational_draft`) for **deterministic Persian operational drafts** instead of the generic `[خروجی آزمایشی قطعی…]` LLM placeholder; UI shows a small **Draft source: mock template** label (not inside draft body). Still HITL-only — no send, no execution.
+
+**Assisted mode pilot readiness gate (Step 211, governance only):** `app/operator_console/assisted_mode_pilot_readiness.py` aggregates existing sandbox/assisted/draft reports into a **limited internal pilot readiness** decision (`not_ready_for_pilot`, `ready_with_guardrails`, or `ready_for_limited_internal_pilot`). This is a reporting gate only — it does **not** enable production send, ticket/order/product mutation, action execution, auto-approval, or graph/mapping changes.
+
+**Limited internal pilot definition:** first-turn seller-initiated tickets only; internal operators only; mock or OpenAI provider explicitly selected; session-only graph output; continue manual sandbox/assisted review logging. **Guardrails:** keep `OPERATOR_AGENTIC_ASSISTED_MODE_ENABLED` limited to the pilot cohort; `execution_allowed=false` and `customer_send_allowed=false`; no customer send button; no auto-send; assisted mode stays additive to the existing console workflow.
+
+```bash
+PYTHONPATH=. python3.11 scripts/build_assisted_mode_pilot_readiness_report.py --overwrite
+```
+
+Inputs (required): `reports/agentic_sandbox_graduation_summary.json`, `reports/agentic_sandbox_readiness_summary.json`, `reports/agentic_knowledge_hint_coverage_summary.json`, `reports/operator_assisted_review_metrics_summary.json`. Optional (missing → warnings only): draft review metrics, console/graph consistency, draft quality slice, action mismatch. Outputs: `reports/assisted_mode_pilot_readiness_summary.json` and `reports/assisted_mode_pilot_readiness_report.md` (no prompts, transcripts, snippets, draft bodies, or secrets).
+
+**Live first-turn shadow intake (Step 212, read-only):** `app/live_shadow/live_first_turn_shadow_intake.py` connects the **live ticket JSONL feed** to the **agentic sandbox graph** in strict shadow mode. Scope: **first-turn seller-initiated** tickets only (no prior support reply, no multi-turn escalations, open/not-closed). Uses the same redacted open-ticket snapshot and full first-vendor extraction path as the operator console — **no governance bypass**. Persists safe rows only (`draft_char_count`, not draft bodies). **Dedupe** by `room_id` + `first_turn_signature`. **No send, no execution, no ticket mutation** (`execution_allowed=false`, `customer_send_allowed=false`, `human_review_required=true`).
+
+```bash
+PYTHONPATH=. python3.11 scripts/run_live_first_turn_shadow_intake.py \
+  --provider mock \
+  --limit 25 \
+  --enable-knowledge-hints \
+  --dedupe \
+  --overwrite
+```
+
+Outputs: `reports/live_shadow_first_turn_runs.jsonl` (append-only) and `reports/live_shadow_first_turn_summary.json`. Operator console shows a small **“Live shadow intake active”** caption when a summary was generated in the last 24 hours.
+
+**Live feed adapter contract (Step 213, integration spec):** [`docs/integration/live_feed_adapter_contract.md`](docs/integration/live_feed_adapter_contract.md) defines the **read-only** handoff for live seller-support tickets into shadow intake. **File-based pilot** (preferred): append or snapshot JSONL to `data/private/live_vendor_tickets.jsonl`. Contract covers required schema, sender normalization, eligibility rules, dedupe (`room_id` + `first_turn_signature`), and security boundaries. **No send, no execution, no ticket mutation.**
+
+**Live Rooms API adapter v1 (Step 217, local/private dev):** Fetches read-only from `https://app.inchand.com/api/v1/internal/rooms` (`LIVE_ROOMS_API_URL`), normalizes to the Step 213 contract, and writes **full raw message text** (no redaction) to gitignored `data/private/` only. Token via `LIVE_ROOMS_API_TOKEN` env only. Does **not** run LangGraph, send replies, or mutate tickets.
+
+```bash
+export LIVE_ROOMS_API_TOKEN=...
+
+PYTHONPATH=. python3.11 scripts/fetch_live_rooms_api.py \
+  --limit 400 \
+  --overwrite \
+  --validate
+```
+
+Outputs: `data/private/live_rooms_raw.json`, `data/private/live_vendor_tickets.jsonl`; with `--validate`, `reports/live_feed_contract_validation_summary.json` and `reports/live_feed_contract_validation_report.md` (aggregate only). Code: `app/live_shadow/live_rooms_api_client.py`, `app/live_shadow/live_rooms_adapter.py`.
+
+**Live tickets dashboard intake (Step 218, operator console):** Sidebar **Data source** → **Live API feed** loads `data/private/live_vendor_tickets.jsonl` (newest `updated_at` first). **Manual refresh only** (`Reload feed` / FA «بارگذاری مجدد») — no polling or websocket. Lists all tickets with eligible/skipped badges; eligible = seller-first, open, no support reply yet. **Sidebar filters:** `ticket_label`, eligibility reason, first sender (persisted in session). **FA mode** shows Jalali timestamps (`YYYY/MM/DD HH:MM`); EN stays Gregorian. Default API fetch size: **400** tickets (`--limit` override). Operator-assisted drafts run **only when the operator clicks** Run/Refresh assisted package (session-only; OpenAI + knowledge hints if enabled). **No send, no execution, no ticket mutation.** Live feed session state is isolated from historical replay. Code: `app/operator_console/live_feed_loader.py`, `app/operator_console/datetime_display.py`.
+
+```bash
+PYTHONPATH=. python3.11 scripts/fetch_live_rooms_api.py --limit 400 --overwrite
+
+OPERATOR_AGENTIC_ASSISTED_MODE_ENABLED=true \
+OPERATOR_AGENTIC_ASSISTED_PROVIDER=openai \
+OPERATOR_AGENTIC_ASSISTED_KNOWLEDGE_HINTS_ENABLED=true \
+PYTHONPATH=. python3.11 scripts/run_operator_console.py
+```
+
+**Knowledge OpenAI rebuild + live intake prep (Step 219):** Rebuild operational knowledge from `data/private/knowledge/operations/`, embed with **OpenAI**, re-index **sandbox pgvector only** (`--confirm-sandbox` + `--confirm-real-openai`). Runs retrieval smoke + settlement policy-fact checks. Paginated live API fetch defaults to **400** rooms.
+
+```bash
+export OPENAI_API_KEY=...
+export PGVECTOR_DATABASE_URL=postgresql://inchand:inchand_dev_password@127.0.0.1:5432/inchand_ai
+
+PYTHONPATH=. python3.11 scripts/rebuild_knowledge_openai_index.py \
+  --confirm-real-openai --confirm-sandbox --overwrite
+
+PYTHONPATH=. python3.11 scripts/fetch_live_rooms_api.py --limit 400 --overwrite --validate
+```
+
+Reports: `reports/knowledge_openai_rebuild_summary.json`, `reports/knowledge_retrieval_smoke_summary.json`, `reports/policy_fact_extraction_check_summary.json`.
+
+**Lightweight final draft reflection (Step 221A, draft-only):** After draft generation and existing calibrations (operational sufficiency, policy grounding, product wording, panel issue), a **single-pass** operational reviewer runs on the **final draft only** — not a multi-agent loop, not autonomous planning, and not chain-of-thought exposure. Flow: `draft_generator → final_draft_reflection_review → optional_lightweight_rewrite → final_safe_draft`. At most **one review pass** and **one rewrite pass**; no recursion or auto-send.
+
+Module: `app/agentic_sandbox/final_draft_reflection.py`. Deterministic rules run first (repeated identifier asks, over-questioning, unsupported claims, policy grounding gaps, forbidden wording, unnecessary photo/panel requests, missing operational acknowledgments). Optional `openai_hybrid` supplements **only** uncertain medium-confidence findings when `draft_provider=openai`.
+
+```bash
+# Defaults: enabled, rule_based provider
+export FINAL_DRAFT_REFLECTION_ENABLED=true
+export FINAL_DRAFT_REFLECTION_PROVIDER=rule_based   # disabled | rule_based | openai_hybrid
+export FINAL_DRAFT_REFLECTION_OPENAI_MODEL=gpt-4o-mini
+export FINAL_DRAFT_REFLECTION_MAX_REWRITE_CHARS=700
+```
+
+Operator console **Technical details** expander shows safe metadata only: reflection reviewed, rewrite applied, issue types (no hidden reasoning). Eval helper (raw vs reflected on JSONL sample):
+
+```bash
+PYTHONPATH=. python3.11 scripts/evaluate_reflection_delta.py \
+  reports/live_first_turn_shadow_intake.jsonl \
+  --output reports/reflection_delta_summary.json
+```
+
+**OpenAI multi-turn baseline freeze (Step 228, behavioral contract):** Freeze a **trusted OpenAI-backed reference** for the full multi-turn eval pack (reflection, cancellation/delivery/settlement routing, closed-ticket gating, photo gating, etc.) so future prompt/routing/model/RAG experiments can be compared for regressions. **Not** a new feature, prompt rewrite, or production deploy — baseline preservation only.
+
+Stored per scenario under `data/evals/golden_outputs/openai_baseline/`: normalized draft **fingerprints** (SHA-256), intent, suggested action, reflection flags, gating metadata, and safe manifest fields (provider, model, timestamps, feature flags). **Never** raw prompts, chain-of-thought, transcripts, embeddings, or API keys. Draft normalization (`normalize_baseline_draft_text`) trims whitespace, normalizes Persian punctuation/digits, collapses repeated dots, and lowercases safe ASCII fragments to avoid cosmetic fingerprint drift.
+
+**CI:** mock multi-turn eval remains CI-safe (`scripts/run_multi_turn_eval_suite.py --provider mock`). OpenAI baseline **freeze/compare is manual or nightly only** — no OpenAI dependency in `make ci`.
+
+```bash
+# Freeze (writes baseline; requires explicit flags)
+PYTHONPATH=. python3.11 scripts/freeze_openai_multi_turn_baseline.py \
+  --confirm-real-openai \
+  --enable-knowledge-hints \
+  --update-baseline \
+  --overwrite
+
+# Compare current behavior against frozen baseline (read-only)
+PYTHONPATH=. python3.11 scripts/compare_openai_baseline.py \
+  --provider openai \
+  --enable-knowledge-hints \
+  --confirm-real-openai \
+  --overwrite
+```
+
+Drift classes: **acceptable** (cosmetic draft fingerprint only), **review_required** (intent/action/reflection/policy metadata changed), **critical_regression** (eval pass→fail, closed-ticket gating break, critical scenario regressions). Reflection aggregates (rewrite rate, issue-type distribution, save rate) are frozen in `manifest.json` to catch silent reflection degradation. Without `--update-baseline`, baseline files cannot be overwritten.
+
+Module: `app/evals/openai_multi_turn_baseline.py`. Docs: `docs/operations/openai_multi_turn_baseline_freeze.md`. Reports: `reports/openai_baseline_freeze_*`, `reports/openai_baseline_compare_*`.
+
+**Iran Post tracking verification (Step 229, read-only tool):** Manual/HITL-only adapter for Ayantech `PostTrackingInquiry` — verifies Iran Post tracking codes without updating orders, tickets, or sending messages. Token from `IRAN_POST_TRACKING_TOKEN` env only (never hardcoded). Safe results exclude sender/receiver name/zip; raw API bodies only under `data/private/` when explicitly requested.
+
+```bash
+export IRAN_POST_TRACKING_ENABLED=true
+export IRAN_POST_TRACKING_TOKEN=...
+
+PYTHONPATH=. python3.11 scripts/verify_iran_post_tracking.py \
+  --tracking-code 051800506400081160839102 \
+  --overwrite
+```
+
+Operator console (assisted mode / manual sandbox): when a plausible Iran Post code is present, section **Tracking verification** / «استعلام کد رهگیری» with button «استعلام از پست ایران» — **manual click only**, session-only result, advisory caption (not auto-sent to seller). Multi-turn metadata may set `tracking_verification_recommended=true` when tracking was requested and fulfilled; **graph does not auto-call the API**. Not in `make ci` (mock HTTP in tests).
+
+Module: `app/tools/tracking/iran_post_tracking.py`. Docs: `docs/integration/iran_post_tracking_api.md`.
+
+**Internal pilot PII policy:** `ALLOW_RAW_PII_INTERNAL_PILOT=true` (default) allows raw phone, IBAN, email, and card values **in feed inputs** so operators can validate entity extraction and review identifiers internally. Validation records these as **informational only** (`raw_identifiers_detected` — allowed in internal pilot mode). **Secrets still fail** (API keys, JWTs, session cookies). Future production feeds may set `ALLOW_RAW_PII_INTERNAL_PILOT=false` for strict redaction. Governance reports remain aggregate-only (no message bodies).
+
+```bash
+PYTHONPATH=. python3.11 scripts/validate_live_feed_contract.py \
+  data/private/live_vendor_tickets.jsonl \
+  --overwrite
+```
+
+Validator: `app/live_shadow/live_feed_contract.py`. Outputs: `reports/live_feed_contract_validation_summary.json` and `reports/live_feed_contract_validation_report.md`.
+
+**OpenAI draft quality pilot (Step 214, draft-only):** `app/agentic_sandbox/openai_draft_provider.py` upgrades **only** Persian draft generation quality inside the existing agentic sandbox / operator-assisted / shadow intake flows. Intent detection, entity extraction, actionability, safety gates, suggested-action mapping, and graph routing stay deterministic and unchanged. **No send, no execution, no ticket mutation, no auto-approve, no prompt/transcript/snippet exposure.**
+
+Provider selection: `mock` (deterministic templates) or `openai` (dedicated chat draft path with `OPENAI_DRAFT_MODEL`, `OPENAI_DRAFT_TEMPERATURE`, `OPENAI_DRAFT_MAX_TOKENS`). When OpenAI is unavailable, the provider **falls back to mock templates** with a warning only. UI labels: FA «منبع پیش‌نویس: OpenAI» / EN “Draft source: OpenAI”. Batch/shadow summaries track `openai_draft_quality_rate`, `generic_reply_rate`, `concise_reply_rate`, and `fallback_to_mock_rate`.
+
+```bash
+export OPENAI_API_KEY=...
+
+OPERATOR_AGENTIC_ASSISTED_MODE_ENABLED=true \
+OPERATOR_AGENTIC_ASSISTED_PROVIDER=openai \
+OPERATOR_AGENTIC_ASSISTED_KNOWLEDGE_HINTS_ENABLED=true \
+PYTHONPATH=. python3.11 scripts/run_operator_console.py
+```
+
+Shadow / batch OpenAI draft runs (read-only; requires explicit confirmation):
+
+```bash
+PYTHONPATH=. python3.11 scripts/run_live_first_turn_shadow_intake.py \
+  --provider openai --confirm-real-openai --limit 10 --dedupe
+
+PYTHONPATH=. python3.11 scripts/run_agentic_sandbox_batch_report.py \
+  --replay-jsonl reports/ai_assist_shadow_replay_v1.jsonl \
+  --provider openai --confirm-real-openai --overwrite
+```
+
+**Operational information sufficiency policies (Step 215, draft quality only):** `app/workflows/operational_information_sufficiency.py` teaches the sandbox/assisted draft path to request **only the minimum operationally required information** — like a marketplace operations copilot, not a generic customer-service chatbot. Deterministic scenario policies cover delivery/shipment confirmation, cancellation, product approval, settlement informational replies, and complaint follow-up. Adds over-questioning suppression (`detect_over_questioning`, `detect_unnecessary_detail_request`), OpenAI prompt policy hints, and post-generation calibration that removes generic «provide more details» phrasing when a request is already operationally complete. Batch metrics track `over_questioning_rate`, `unnecessary_clarification_rate`, and `operational_completion_success_rate`. Sandbox preview review adds optional operator checkbox: FA «درخواست اطلاعات اضافه غیرضروری داشت» / EN “Asked for unnecessary additional details”. **No send, no execution, no ticket mutation, HITL unchanged.**
+
+**Grounded policy_explanation drafts (Step 216, draft quality only):** `app/knowledge/policy_fact_extraction.py` injects **safe capped policy facts** (≤300 chars per hint, ≤600 total) into `policy_explanation` draft prompts — not just `document_type` metadata. Graph state stores internal `knowledge_hints_for_prompt` (snippet text for prompt building only); batch JSONL / operator console still expose **doc types + counts + snippet_chars only** — raw knowledge documents are not exposed. Settlement timing must be grounded: wallet block → 3 days after order finalization → first settlement window/payout. Post-generation calibration (`app/evals/draft_policy_grounding_calibration.py`) replaces vague «depends on policy / refer to rules» settlement drafts with the canonical grounded answer when `settlement_rules` facts are present. **No retrieval index/ranking changes, no send/execution, HITL unchanged.**
+
+**Console vs graph consistency check (Step 204, diagnostics only):** `app/agentic_sandbox/console_graph_consistency.py` compares operator-console **first-turn draft context** (internal draft path) with **agentic sandbox graph preview** for the same ticket. Flags `consistent`, `explainable_difference`, or `mismatch` per safe field (intent, action, actionability, entities, knowledge hints, safety). Explainable when AI assist open snapshot differs from first-turn graph path, knowledge-hint config differs, or graph extracts extra IDs from `full_first_vendor_message_text`. **No behavior changes** — reports only.
+
+```bash
+PYTHONPATH=. python3.11 scripts/check_console_graph_consistency.py \
+  --room-id 7743 \
+  --replay-jsonl reports/ai_assist_shadow_replay_v1.jsonl \
+  --redacted-jsonl data/private/vendor_tickets_400.redacted.jsonl \
+  --provider mock \
+  --enable-knowledge-hints \
+  --overwrite
+```
+
+Outputs: `reports/console_graph_consistency_<room_id>.json` and `.md` (single room), or batch `reports/console_graph_consistency_batch.jsonl`, `console_graph_consistency_summary.json`, `console_graph_consistency_report.md`.
+
+**Full first-turn entity extraction source (Step 203):** First-turn **entity extraction** uses the full redacted first seller/vendor message (`full_first_vendor_message_text` from `data/private/vendor_tickets_400.redacted.jsonl` via `app/operator_console/console_loader.py` and `app/live_feed/open_ticket_snapshot.py`). **UI and draft prompts** stay on truncated `original_vendor_issue_preview` (~200 chars). Still **first-turn only** — never `latest_vendor_message`, `recent_context_preview`, or full transcript. Metadata: `entity_extraction_source`, `entity_extraction_source_char_count`, `display_preview_char_count` (no full message text in reports/review JSONL). Leakage guard allows entities present in the full first-turn source even when absent from the display preview. Fixes truncation-related misses (e.g. room `43992` with two `INC-` order IDs).
+
+```bash
+PYTHONPATH=. python3.11 -m pytest tests/test_full_first_turn_entity_extraction.py -q
+```
+
+**Entity extraction miss investigation (Step 202, diagnostics only):** `app/workflows/entity_extraction_investigation.py` compares operator-flagged sandbox preview entity misses (`entity_extraction_correct=false` in `reports/agentic_preview_review_feedback.jsonl`) against full first-turn reference extraction from redacted export, truncated `original_vendor_issue_preview`, and sandbox first-turn path (Step 203 uses `full_first_vendor_message_text` when attached). Classifies likely root causes (e.g. `first_turn_isolation_gap`, `extraction_rule_gap`, `review_mismatch`). Outputs: `reports/entity_extraction_investigation_summary.json` and `reports/entity_extraction_investigation_report.md`.
+
+```bash
+PYTHONPATH=. python3.11 scripts/build_entity_extraction_investigation_report.py --room-id 43992 --overwrite
+```
+
+**Draft quality slice analysis (Step 192, analytics only):** `app/evals/draft_quality_slice_analysis.py` breaks draft review metrics into operational **slices** (detected intent, conceptual intent, suggested action, ticket/route label, entity presence, actionability) to find weak categories instead of relying on global averages only. Marks weak slices when usable/action/entity rates fall below thresholds (minimum review count per slice, default ≥3). Aggregates failure patterns (verbose, hallucination, wrong action, missing entities, unnecessary followup, identifier/clarification issues). Optional enrichment from offline draft JSONL adds `route_label`, extracted entities, and Step 191 actionability fields. Outputs: `reports/draft_quality_slice_analysis_summary.json` and `reports/draft_quality_slice_analysis_report.md`. **Advisory only** — no prompt/mapping/behavior changes.
+
+```bash
+PYTHONPATH=. python3.11 scripts/build_draft_quality_slice_analysis.py --overwrite
+```
+
+**Actionability validation (Step 191, operational validation only):** `app/evals/actionability_validation.py` blocks drafts from claiming an operational action started, forwarded, or completed when required identifiers are missing from the **first vendor message** (e.g. `order_id` for delivery/order/return asks, `product_id` for product approval/edit, `tracking_code` or `order_id` for shipment record updates). Settlement and policy questions remain actionable without IDs. Before LLM draft generation, validation is injected into the prompt; after generation, deterministic post-processing replaces replies that still contain fake operational claims («ثبت شد»، «ارجاع شد»، «در حال بررسی») with a concise identifier request. Suggested action metadata keeps the operational action with `actionability=false`, `missing_required_entities`, and `requires_identifier_request=true` — **no** automatic downgrade to `monitor`. Operator console internal draft preview shows **Actionable**, **Missing entities**, and **Validation reason**. No ticket/order mutation, no auto-send, no external ID fetch.
+
+```bash
+PYTHONPATH=. python3.11 -m pytest tests/test_actionability_validation.py -q
+```
+
+**Sheba/IBAN entity extraction (Step 190, deterministic only):** `app/workflows/operational_entity_extraction.py` extracts Iranian Sheba/IBAN (`IR` + 24 digits, or 24 digits near شبا/حساب/واریز keywords) with **post/tracking precedence** over bare 24-digit runs (Iran Post tracking). Incomplete 23/25-digit candidates near banking keywords add warnings. **Internal calibration console** shows the **full normalized IBAN** when `SHOW_FULL_IBAN_IN_OPERATOR_CONSOLE=true` (default) so reviewers can verify extraction; set `false` to use `mask_sensitive_entity()` in the UI for future production/HITL rollout. No banking API verification, no payment mutation, no customer/public exposure. Order ID hardening: standalone 7-digit, `INC`/`inc_` variants, `سفارش:`, Persian digits — without 7-digit submatches inside IBAN/tracking spans.
+
+**Operator console UX + review schema (Step 189):** `app/operator_console/display_text.py` replaces visible PII placeholders (`[PHONE_NUMBER]`, `[IBAN]`, …) with short Persian labels in **UI display only** (snapshot previews, RTL blocks, full conversation view) — underlying redaction and prompt paths unchanged. Draft review uses one Persian **entity** selector (**بررسی استخراج موجودیت**): *نیاز به استخراج بوده و استخراج شده* → `entities_applicable=true`, `entities_correct=true`; *نیاز به استخراج بوده ولی استخراج نکرده* → `true` / `false`; *نیاز به استخراج نداشته* → `false` / `null`. `entity_accuracy_rate` = correct ÷ applicable only. Ticket list uses **1-based row numbers** over the filtered visible set (`#1 — Ticket …`). **No** draft generation, taxonomy, or production workflow changes.
+
+```bash
+# Preview offline first-turn drafts in console
+OPERATOR_DRAFT_PREVIEW_ENABLED=true \
+PYTHONPATH=. python3.11 scripts/run_operator_console.py
+
+# Session-only regeneration (requires OPENAI_API_KEY)
+OPERATOR_DRAFT_PREVIEW_ENABLED=true \
+OPERATOR_DRAFT_GENERATION_ENABLED=true \
+PYTHONPATH=. python3.11 scripts/run_operator_console.py
+```
+
+```bash
+# Mock drafts (no network)
+PYTHONPATH=. python3.11 scripts/generate_offline_draft_suggestions.py --overwrite --limit 5
+
+# Real OpenAI (local operator approval only)
+PYTHONPATH=. python3.11 scripts/generate_offline_draft_suggestions.py \
+  --provider openai --confirm-real-openai --overwrite
+
+# Optional safe prompt audit (no full prompts in output)
+PYTHONPATH=. python3.11 scripts/generate_offline_draft_suggestions.py \
+  --overwrite --limit 5 --write-prompt-audit
+```
+
+**Offline draft vs gold evaluation (Step 172, evaluation only):** deterministic first-pass comparison of Step 171 drafts to historical human replies (`app/evals/offline_draft_evaluation.py`). Loads local `reports/offline_draft_suggestions_v1.jsonl` + `reports/historical_reply_benchmark_v1.jsonl` (gold text used **only** for offline metrics — never for draft generation or Step 173 console prompts). Writes gitignored `reports/offline_draft_evaluation_v1.json` and `.md` with aggregate counts, Jaccard **lexical_overlap_score_avg**, intent/action/label distributions, and low-overlap case ids (**no** raw draft/gold bodies in markdown). **Not** production quality approval; **not** customer send.
+
+```bash
+PYTHONPATH=. python3.11 scripts/evaluate_offline_draft_suggestions.py --overwrite
+```
+
+**Operational knowledge foundation (Step 162, inventory only):** two complementary lanes — **official operational knowledge** (policies, SOPs, FAQs; authoritative) under `data/private/knowledge/operations/` (not committed), and **historical ticket memory** (aggregate patterns from `reports/historical_reply_benchmark_summary.json` — reference experience only, **not** policy truth). If they conflict, **official policy wins**. Historical lane never stores gold replies in the inventory output. **Templates (safe placeholders):** `docs/templates/knowledge/*.md.example` — copy to the private directory after review. **Code:** `app/knowledge/` (`knowledge_models`, `knowledge_loader`, `historical_ticket_memory`). **Inventory CLI:** `scripts/build_operational_knowledge_inventory.py` → `reports/operational_knowledge_inventory.{json,md}` (gitignored). **Next (future):** embedding/indexing/retrieval — not in this step.
+
+```bash
+PYTHONPATH=. python3.11 scripts/build_operational_knowledge_inventory.py --overwrite
+```
+
+**Knowledge chunking (Step 163, metadata only):** dual-lane **retrieval-ready chunks** without embeddings or pgvector indexing. **Official policy** markdown under `data/private/knowledge/operations/` is split on `#` / `##` headings with `priority_rank=10`. **Historical memory** uses **aggregate-only** text from `reports/historical_reply_benchmark_summary.json` with `priority_rank=1` (reference experience, not policy truth). If lanes conflict at retrieval time, **official policy wins** (`official_policy_overrides_historical_memory`). **Code:** `app/knowledge/knowledge_chunking.py`. **CLI:** `scripts/build_knowledge_chunks.py` → gitignored `reports/knowledge_chunks_preview.jsonl`, `knowledge_chunks_summary.{json,md}`. Embeddings/indexing intentionally **not** enabled yet.
+
+```bash
+PYTHONPATH=. python3.11 scripts/build_knowledge_chunks.py --overwrite
+```
+
+**Knowledge embedding + sandbox index (Step 164):** embed and upsert Step 163 chunks into **local sandbox pgvector only** (`rag_vector_records` with `record_id` prefix `knowledge::`). **Official policy** chunks use `priority_rank=10`; **historical memory** uses `priority_rank=1`. Smoke queries rank **priority first, then vector score** — if lanes conflict, **official policy wins** (`official_policy_overrides_historical_memory`). Requires `--confirm-sandbox`; OpenAI embeddings require `--provider openai --confirm-real-openai` and `OPENAI_API_KEY`. **Not** wired to draft/final responses, operator console, or production `RAG_PROFILE`.
+
+```bash
+# Index (mock — CI/tests; use openai + --confirm-real-openai locally for real vectors)
+PYTHONPATH=. python3.11 scripts/index_knowledge_chunks_pgvector.py \
+  reports/knowledge_chunks_preview.jsonl \
+  --namespace knowledge_operations_sandbox \
+  --index-version knowledge_v1 \
+  --provider mock \
+  --model mock-knowledge \
+  --dimensions 1536 \
+  --confirm-sandbox
+
+# Smoke query (ranking: official_policy before historical_memory, then score)
+PYTHONPATH=. python3.11 scripts/query_knowledge_pgvector.py \
+  --query "قوانین انتشار کالای غیر اصل چیست؟" \
+  --namespace knowledge_operations_sandbox \
+  --index-version knowledge_v1 \
+  --top-k 5 \
+  --provider mock \
+  --confirm-sandbox
+```
+
+**Real OpenAI knowledge embedding smoke (Step 165):** re-index with **`knowledge_v1_openai`** using `text-embedding-3-small` (1536-D) for **semantic** validation; Step 164 **`knowledge_v1`** mock index remains for offline CI only. Smoke queries use `--provider openai --confirm-real-openai`. Aggregate results: [`docs/operations/real_knowledge_embedding_smoke_report.md`](docs/operations/real_knowledge_embedding_smoke_report.md). **Not** wired to operator console, draft/final, or production `RAG_PROFILE`.
+
+```bash
+# Re-index (local; OPENAI_API_KEY required)
+PYTHONPATH=. python3.11 scripts/index_knowledge_chunks_pgvector.py \
+  reports/knowledge_chunks_preview.jsonl \
+  --namespace knowledge_operations_sandbox \
+  --index-version knowledge_v1_openai \
+  --provider openai \
+  --model text-embedding-3-small \
+  --dimensions 1536 \
+  --confirm-real-openai \
+  --confirm-sandbox
+
+# Semantic smoke query (example)
+PYTHONPATH=. python3.11 scripts/query_knowledge_pgvector.py \
+  --query "تسویه فروشنده چند روزه انجام می‌شود؟" \
+  --namespace knowledge_operations_sandbox \
+  --index-version knowledge_v1_openai \
+  --top-k 5 \
+  --provider openai \
+  --confirm-real-openai \
+  --confirm-sandbox
+```
+
+**Sandbox knowledge retrieval tool (Step 166):** governed executor `app/knowledge/knowledge_retrieval_tool.py` + CLI `scripts/run_sandbox_knowledge_retrieval_tool.py`. Returns safe hits only (`snippet` ≤300 chars, `retrieval_activated=false`, `sandbox_only=true`). **Ranking:** `official_policy` (`priority_rank=10`) before `historical_memory` (`priority_rank=1`) when `prefer_official_policy=true` (default). **Not** wired to operator console, draft/final, LangGraph, or production `RAG_PROFILE`.
+
+```bash
+PYTHONPATH=. python3.11 scripts/run_sandbox_knowledge_retrieval_tool.py \
+  --query "قوانین انتشار کالای غیراصل چیست؟" \
+  --namespace knowledge_operations_sandbox \
+  --index-version knowledge_v1_openai \
+  --top-k 5 \
+  --confirm-real-openai \
+  --confirm-sandbox
+```
 
 | Mode | Source | Behavior |
 |------|--------|----------|

@@ -1,0 +1,14 @@
+{
+  "scenario_id": "delivery_completed_ack",
+  "draft_fingerprint": "3829622a0ad7d647ba0bbe7088fe7302acaee37d18a6e3e384dcbd40067ec340",
+  "detected_intent": "seller_notification",
+  "suggested_action": "record_update",
+  "reflection_rewrite_applied": false,
+  "should_generate_draft": null,
+  "policy_question_type": "none",
+  "reflection_issue_types": [],
+  "graph_status": "ok",
+  "eval_passed": true,
+  "skip_reason": null,
+  "updated_at_utc": "2026-05-26T14:04:21+00:00"
+}

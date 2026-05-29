@@ -5,6 +5,12 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Any
 
+from app.agentic_sandbox.final_draft_reflection import (
+    FinalDraftReflectionResult,
+    apply_final_draft_reflection_review,
+    reflection_comparison_session_row,
+    reflection_metadata_row,
+)
 from app.agentic_sandbox.mock_draft_templates import (
     MockOperationalDraftInput,
     generate_mock_operational_draft,
@@ -23,6 +29,7 @@ from app.evals.conceptual_intent_fa import (
 from app.evals.draft_completion_calibration import apply_draft_completion_calibration
 from app.evals.draft_evidence_wording_calibration import calibrate_photo_evidence_wording
 from app.evals.draft_policy_grounding_calibration import apply_policy_grounding_calibration
+from app.evals.draft_product_wording_calibration import apply_product_wording_calibration
 from app.evals.draft_prompt_leakage import (
     assert_prompt_messages_safe,
     extract_forbidden_values_from_benchmark_case,
@@ -46,15 +53,41 @@ from app.evals.offline_draft_generation import (
 from app.knowledge.policy_fact_extraction import hint_to_prompt_dict
 from app.operator_console.console_models import OperatorTicket
 from app.operator_console.knowledge_hints import KnowledgeHint
+from app.tools.inchand.order_lookup import (
+    lookup_inchand_order,
+    normalize_inchand_order_id,
+)
+from app.tools.operational_actions_registry import (
+    OperationalToolId,
+    build_inchand_eligibility_context,
+    build_iran_post_eligibility_context,
+    evaluate_tool_eligibility,
+)
+from app.tools.tracking.iran_post_tracking import (
+    infer_plausible_iran_post_tracking_code_from_text,
+    verify_iran_post_tracking_code,
+)
+from app.workflows.multi_order_shipment_decision import (
+    MultiOrderShipmentInput,
+    decide_multi_order_shipment,
+    extract_all_inchand_order_ids_with_diagnostics,
+)
+from app.workflows.multi_turn_ticket_context import apply_multi_turn_metadata_to_actionability
 from app.workflows.operational_entity_extraction import (
     OperationalEntityExtractionResult,
     extract_operational_entities,
 )
 from app.workflows.operational_information_sufficiency import (
     apply_operational_sufficiency_calibration,
+    apply_panel_issue_draft_calibration,
+    detect_operational_scenario,
     operational_sufficiency_metrics_row,
 )
 from app.workflows.seller_notification_detection import normalize_persian_arabic_digits
+from app.workflows.shipment_delivery_decision import (
+    ShipmentDeliveryDecisionInput,
+    decide_shipment_delivery,
+)
 from app.workflows.suggested_action_taxonomy import map_intent_to_suggested_action
 from app.workflows.vendor_ticket_intent_detection import detect_vendor_ticket_intent
 
@@ -168,6 +201,7 @@ def _ticket_from_state(state: dict[str, Any]) -> OperatorTicket:
         entity_warnings_summary=entities.get("warnings_summary"),
         detected_intent=state.get("detected_intent"),
         full_first_vendor_message_text=state.get("full_first_vendor_message_text"),
+        shop_id=state.get("shop_id"),
     )
 
 
@@ -230,7 +264,12 @@ def detect_intent_node(state: dict[str, Any]) -> dict[str, Any]:
 
 def extract_entities_node(state: dict[str, Any]) -> dict[str, Any]:
     """Operational entity extraction from full first seller message when available."""
-    extraction_text = state.get("first_turn_extraction_text") or state.get("first_turn_text") or ""
+    extraction_text = (
+        state.get("multi_turn_extraction_text")
+        or state.get("first_turn_extraction_text")
+        or state.get("first_turn_text")
+        or ""
+    )
     source = state.get("entity_extraction_source") or ENTITY_SOURCE_ORIGINAL_VENDOR_ISSUE
     entities = extract_operational_entities(extraction_text)
     entity_dict = _entities_to_dict(entities, entity_extraction_source=str(source))
@@ -340,6 +379,10 @@ def validate_actionability_node(state: dict[str, Any]) -> dict[str, Any]:
         seller_text=first_turn,
         detected_intent=state.get("detected_intent"),
     )
+    if state.get("multi_turn_active"):
+        multi_meta = state.get("multi_turn_context_metadata") or {}
+        if isinstance(multi_meta, dict):
+            validation = apply_multi_turn_metadata_to_actionability(multi_meta, validation)
     meta = actionability_metadata_row(validation)
     return {
         "actionability": meta,
@@ -355,12 +398,519 @@ def validate_actionability_node(state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _tool_debug_payload(
+    *,
+    eligible_tools: list[str],
+    blocked_tools: list[str],
+    blocked_reasons: dict[str, str],
+    executed_tools: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "planned_tools": eligible_tools,
+        "blocked_tools": blocked_tools,
+        "blocked_reasons": blocked_reasons,
+        "executed_tools": list(executed_tools or []),
+    }
+
+
+def plan_read_only_tools_node(
+    state: dict[str, Any],
+    *,
+    settings: AppSettings | None = None,
+) -> dict[str, Any]:
+    cfg = settings or get_settings()
+    source_mode = str(state.get("source_mode") or "historical_replay")
+    graph_tools_enabled = bool(
+        state.get("graph_tools_enabled")
+        and cfg.agentic_graph_read_only_tools_enabled
+        and source_mode
+        in {
+            item.strip()
+            for item in (cfg.agentic_graph_tool_execution_source_modes or "").split(",")
+            if item.strip()
+        }
+    )
+    entities = (
+        state.get("extracted_entities") if isinstance(state.get("extracted_entities"), dict) else {}
+    )
+    order_ids = entities.get("order_ids") if isinstance(entities, dict) else []
+    order_id_present = bool(order_ids and order_ids[0])
+    tracking_code_present = (
+        bool((entities.get("tracking_code") or "").strip()) if isinstance(entities, dict) else False
+    )
+    carrier_candidate = entities.get("tracking_carrier") if isinstance(entities, dict) else None
+    detected_scenario = detect_operational_scenario(
+        seller_text=state.get("response_target_seller_text") or state.get("first_turn_text") or "",
+        detected_intent=state.get("detected_intent"),
+        suggested_action=state.get("suggested_action"),
+        conceptual_intent_fa=state.get("conceptual_intent_fa"),
+    )
+    inchand_eval = evaluate_tool_eligibility(
+        OperationalToolId.INCHAND_ORDER_LOOKUP,
+        build_inchand_eligibility_context(
+            cfg,
+            source_mode=source_mode,
+            order_id_present=order_id_present,
+            sandbox_auto_enabled=cfg.agentic_graph_order_lookup_enabled and graph_tools_enabled,
+            detected_scenario=detected_scenario,
+            scenario_auto_eligible=True,
+        ),
+    )
+    iran_eval = evaluate_tool_eligibility(
+        OperationalToolId.IRAN_POST_TRACKING_VERIFICATION,
+        build_iran_post_eligibility_context(
+            cfg,
+            source_mode=source_mode,
+            tracking_code_present=tracking_code_present,
+            carrier_candidate=str(carrier_candidate or "iran_post"),
+            order_delivered_in_inchand=bool(state.get("order_delivered_in_inchand")),
+            sandbox_auto_enabled=cfg.agentic_graph_iran_post_verify_enabled and graph_tools_enabled,
+        ),
+    )
+    eligible_tools: list[str] = []
+    blocked_tools: list[str] = []
+    blocked_reasons: dict[str, str] = {}
+    for result in (inchand_eval, iran_eval):
+        key = result.tool_id.value
+        if result.sandbox_auto_allowed:
+            eligible_tools.append(key)
+        else:
+            blocked_tools.append(key)
+            if result.blocked_reason:
+                blocked_reasons[key] = result.blocked_reason
+    if not graph_tools_enabled:
+        blocked_reasons["graph_guardrail"] = "graph_read_only_tools_disabled_or_source_blocked"
+    return {
+        "graph_tools_enabled": graph_tools_enabled,
+        "graph_tool_execution_mode": "sandbox_auto" if graph_tools_enabled else "disabled",
+        "graph_tool_metadata": _tool_debug_payload(
+            eligible_tools=eligible_tools,
+            blocked_tools=blocked_tools,
+            blocked_reasons=blocked_reasons,
+        ),
+        "node_results": _append_node_result(
+            state,
+            node="plan_read_only_tools",
+            status="ok",
+            summary=f"tools_enabled={graph_tools_enabled};planned={len(eligible_tools)}",
+        ),
+    }
+
+
+def execute_order_lookup_node(
+    state: dict[str, Any],
+    *,
+    settings: AppSettings | None = None,
+) -> dict[str, Any]:
+    cfg = settings or get_settings()
+    metadata = dict(state.get("graph_tool_metadata") or {})
+    planned = set(metadata.get("planned_tools") or [])
+    executed = list(metadata.get("executed_tools") or [])
+    if (
+        not state.get("graph_tools_enabled")
+        or OperationalToolId.INCHAND_ORDER_LOOKUP.value not in planned
+    ):
+        return {
+            "node_results": _append_node_result(
+                state,
+                node="execute_order_lookup",
+                status="skipped",
+                summary="not_planned_or_disabled",
+            ),
+        }
+    text = (state.get("response_target_seller_text") or state.get("first_turn_text") or "").strip()
+    extraction = extract_all_inchand_order_ids_with_diagnostics(text)
+    multi_order_ids = list(extraction.normalized_order_ids)
+    entities = (
+        state.get("extracted_entities") if isinstance(state.get("extracted_entities"), dict) else {}
+    )
+    order_ids = entities.get("order_ids") if isinstance(entities, dict) else []
+    if not multi_order_ids and order_ids:
+        normalized_from_entities = [
+            normalized for raw in order_ids if (normalized := normalize_inchand_order_id(str(raw)))
+        ]
+        multi_order_ids = list(dict.fromkeys(normalized_from_entities))
+    order_id = multi_order_ids[0] if multi_order_ids else None
+    if not order_id:
+        return {
+            "graph_tool_errors": [*list(state.get("graph_tool_errors") or []), "missing_order_id"],
+            "multi_order_ids": [],
+            "multi_order_batch_count": 0,
+            "node_results": _append_node_result(
+                state,
+                node="execute_order_lookup",
+                status="failed",
+                summary="missing_order_id",
+            ),
+        }
+    max_auto = int(cfg.multi_order_batch_max_auto_lookup)
+    multi_enabled = bool(
+        cfg.multi_order_batch_enabled
+        and state.get("graph_tools_enabled")
+        and str(state.get("source_mode") or "historical_replay") == "manual_sandbox_chat"
+        and len(multi_order_ids) >= 2
+    )
+    limit_exceeded = multi_enabled and len(multi_order_ids) > max_auto
+    lookup_ids = multi_order_ids[:max_auto] if multi_enabled else ([order_id] if order_id else [])
+    lookup_results: dict[str, dict[str, Any]] = {}
+    for idx, lookup_order_id in enumerate(lookup_ids):
+        result = lookup_inchand_order(lookup_order_id, settings=cfg)
+        safe = result.to_safe_dict()
+        lookup_results[lookup_order_id] = safe
+        if idx == 0:
+            metadata.setdefault("primary_order_lookup_id", lookup_order_id)
+    if lookup_results:
+        executed.append(OperationalToolId.INCHAND_ORDER_LOOKUP.value)
+        metadata["executed_tools"] = list(dict.fromkeys(executed))
+    primary_lookup = lookup_results.get(order_id) if order_id else None
+    if primary_lookup is None and lookup_results:
+        first_key = next(iter(lookup_results.keys()))
+        primary_lookup = lookup_results[first_key]
+    tool_results = dict(state.get("graph_tool_results") or {})
+    tool_results[OperationalToolId.INCHAND_ORDER_LOOKUP.value] = {
+        "found": bool((primary_lookup or {}).get("found")),
+        "is_delivered_in_inchand": bool((primary_lookup or {}).get("is_delivered_in_inchand")),
+        "primary_parcel_tracking_code": (primary_lookup or {}).get("primary_parcel_tracking_code"),
+        "order_status": (primary_lookup or {}).get("order_status"),
+        "primary_provider_status": (primary_lookup or {}).get("primary_provider_status"),
+        "primary_parcel_status_name": (primary_lookup or {}).get("primary_parcel_status_name"),
+    }
+    metadata["multi_order_candidates_found"] = list(extraction.candidates_found)
+    metadata["multi_order_rejected_candidates"] = list(extraction.rejected_candidates)
+    metadata["multi_order_duplicate_count"] = int(extraction.duplicate_count)
+    metadata["multi_order_batch_limit_exceeded"] = limit_exceeded
+    return {
+        "order_lookup_result": primary_lookup,
+        "multi_order_ids": multi_order_ids,
+        "multi_order_lookup_results": lookup_results,
+        "multi_order_batch_enabled": multi_enabled,
+        "multi_order_batch_count": len(multi_order_ids),
+        "multi_order_batch_limit_exceeded": limit_exceeded,
+        "graph_tool_results": tool_results,
+        "graph_tool_metadata": metadata,
+        "node_results": _append_node_result(
+            state,
+            node="execute_order_lookup",
+            status="ok",
+            summary=(
+                f"orders={len(multi_order_ids)} executed={len(lookup_results)} "
+                f"limit_exceeded={limit_exceeded}"
+            ),
+        ),
+    }
+
+
+def _shipment_decision_from_state(state: dict[str, Any]) -> dict[str, Any] | None:
+    text = (state.get("response_target_seller_text") or state.get("first_turn_text") or "").strip()
+    entities = (
+        state.get("extracted_entities") if isinstance(state.get("extracted_entities"), dict) else {}
+    )
+    order_ids = entities.get("order_ids") if isinstance(entities, dict) else []
+    order_id = normalize_inchand_order_id(str(order_ids[0])) if order_ids else None
+    tracking_code = (
+        (entities.get("tracking_code") or "").strip() if isinstance(entities, dict) else None
+    )
+    tracking_code = tracking_code or infer_plausible_iran_post_tracking_code_from_text(text)
+    decision = decide_shipment_delivery(
+        ShipmentDeliveryDecisionInput(
+            seller_text=text,
+            detected_scenario=detect_operational_scenario(
+                seller_text=text,
+                detected_intent=state.get("detected_intent"),
+                suggested_action=state.get("suggested_action"),
+                conceptual_intent_fa=state.get("conceptual_intent_fa"),
+            ),
+            order_id=order_id,
+            order_lookup_result=state.get("order_lookup_result"),
+            order_lookup_attempted=state.get("order_lookup_result") is not None,
+            seller_provided_tracking_code=tracking_code,
+            seller_provided_carrier=(
+                entities.get("tracking_carrier") if isinstance(entities, dict) else None
+            ),
+            iran_post_tracking_result=state.get("iran_post_tracking_result"),
+            source_mode=str(state.get("source_mode") or "historical_replay"),
+            tool_execution_mode=str(state.get("graph_tool_execution_mode") or "disabled"),
+            ticket_label=state.get("ticket_label"),
+            prior_optional_postal_tracking_request_asked=bool(
+                (state.get("multi_turn_context_metadata") or {}).get(
+                    "multi_turn_tracking_optional"
+                ),
+            ),
+            seller_replied_after_optional_postal_tracking_request=bool(
+                (state.get("multi_turn_context_metadata") or {}).get(
+                    "multi_turn_pending_request_fulfilled"
+                ),
+            ),
+        ),
+    )
+    return decision.to_safe_dict()
+
+
+def shipment_delivery_decision_node(state: dict[str, Any]) -> dict[str, Any]:
+    metadata = dict(state.get("graph_tool_metadata") or {})
+    executed_tools = {str(item) for item in (metadata.get("executed_tools") or []) if str(item)}
+    lookup_result = state.get("order_lookup_result")
+    lookup_present = isinstance(lookup_result, dict)
+    lookup_found = bool(lookup_result.get("found")) if lookup_present else False
+    lookup_delivered = (
+        bool(lookup_result.get("is_delivered_in_inchand")) if lookup_present else False
+    )
+    lookup_executed = OperationalToolId.INCHAND_ORDER_LOOKUP.value in executed_tools
+    lookup_source = "none"
+    if lookup_executed:
+        lookup_source = "graph_auto"
+    elif lookup_present:
+        lookup_source = "session_cache"
+    metadata.update(
+        {
+            "order_lookup_executed": lookup_executed,
+            "order_lookup_result_present_before_decision": lookup_present,
+            "order_lookup_found_before_decision": lookup_found,
+            "order_lookup_delivered_before_decision": lookup_delivered,
+            "order_lookup_result_source": lookup_source,
+        },
+    )
+    multi_order_ids = list(state.get("multi_order_ids") or [])
+    multi_enabled = bool(state.get("multi_order_batch_enabled"))
+    multi_decision: dict[str, Any] | None = None
+    if multi_enabled and len(multi_order_ids) >= 2:
+        aggregate = decide_multi_order_shipment(
+            MultiOrderShipmentInput(
+                seller_text=(
+                    state.get("response_target_seller_text") or state.get("first_turn_text") or ""
+                ),
+                source_mode=str(state.get("source_mode") or "historical_replay"),
+                graph_tools_enabled=bool(state.get("graph_tools_enabled")),
+                detected_intent=state.get("detected_intent"),
+                suggested_action=state.get("suggested_action"),
+                conceptual_intent_fa=state.get("conceptual_intent_fa"),
+                preloaded_lookup_results=dict(state.get("multi_order_lookup_results") or {}),
+                settings=get_settings(),
+            ),
+        )
+        multi_decision = aggregate.to_safe_dict()
+        decision = {
+            "decision_type": aggregate.decision_type,
+            "recommended_reply_fa": aggregate.recommended_reply_fa,
+            "should_override_draft": True,
+            "data_sources": ["seller_message", "inchand_order_lookup"],
+            "tool_recommendations": {
+                "order_lookup_recommended": False,
+                "iran_post_verification_recommended": False,
+                "skip_iran_post_reason": "multi_order_aggregate",
+            },
+            "order_delivered_in_inchand": aggregate.decision_type == "multi_order_all_delivered",
+            "tracking_verification_status": None,
+        }
+    else:
+        decision = _shipment_decision_from_state(state)
+    if decision is None:
+        return {
+            "graph_tool_metadata": metadata,
+            "node_results": _append_node_result(
+                state,
+                node="shipment_delivery_decision",
+                status="skipped",
+                summary="decision_unavailable",
+            ),
+        }
+    decision_sources = tuple(
+        str(item) for item in (decision.get("data_sources") or []) if str(item)
+    )
+    decision_used_lookup = "inchand_order_lookup" in decision_sources
+    tool_results = dict(state.get("graph_tool_results") or {})
+    tool_results["shipment_delivery_decision"] = {
+        "decision_type": decision.get("decision_type"),
+        "order_delivered_in_inchand": bool(decision.get("order_delivered_in_inchand")),
+        "tracking_verification_status": decision.get("tracking_verification_status"),
+        "decision_used_order_lookup_result": decision_used_lookup,
+    }
+    return {
+        "shipment_delivery_decision": decision,
+        "shipment_delivery_decision_type": decision.get("decision_type"),
+        "multi_order_decision": multi_decision,
+        "multi_order_decision_type": (multi_decision or {}).get("decision_type"),
+        "multi_order_summary": (multi_decision or {}).get("summary"),
+        "grounded_decision_reply": decision.get("recommended_reply_fa"),
+        "order_delivered_in_inchand": bool(decision.get("order_delivered_in_inchand")),
+        "decision_used_order_lookup_result": decision_used_lookup,
+        "order_lookup_result_source": lookup_source,
+        "order_lookup_auto_triggered": lookup_executed,
+        "graph_tool_metadata": metadata,
+        "graph_tool_results": tool_results,
+        "node_results": _append_node_result(
+            state,
+            node="shipment_delivery_decision",
+            status="ok",
+            summary=f"type={decision.get('decision_type')}",
+        ),
+    }
+
+
+def execute_iran_post_tracking_node(
+    state: dict[str, Any],
+    *,
+    settings: AppSettings | None = None,
+) -> dict[str, Any]:
+    cfg = settings or get_settings()
+    decision = state.get("shipment_delivery_decision")
+    if not isinstance(decision, dict):
+        return {
+            "node_results": _append_node_result(
+                state,
+                node="execute_iran_post_tracking",
+                status="skipped",
+                summary="no_decision",
+            ),
+        }
+    recommend = bool(
+        (decision.get("tool_recommendations") or {}).get("iran_post_verification_recommended")
+    )
+    if not recommend:
+        return {
+            "node_results": _append_node_result(
+                state,
+                node="execute_iran_post_tracking",
+                status="skipped",
+                summary="not_recommended",
+            ),
+        }
+    entities = (
+        state.get("extracted_entities") if isinstance(state.get("extracted_entities"), dict) else {}
+    )
+    tracking_code = (
+        (entities.get("tracking_code") or "").strip() if isinstance(entities, dict) else ""
+    )
+    if not tracking_code:
+        tracking_code = (
+            infer_plausible_iran_post_tracking_code_from_text(
+                state.get("response_target_seller_text") or state.get("first_turn_text") or "",
+            )
+            or ""
+        )
+    eval_result = evaluate_tool_eligibility(
+        OperationalToolId.IRAN_POST_TRACKING_VERIFICATION,
+        build_iran_post_eligibility_context(
+            cfg,
+            source_mode=str(state.get("source_mode") or "historical_replay"),
+            tracking_code_present=bool(tracking_code),
+            carrier_candidate=str(entities.get("tracking_carrier") or "iran_post"),
+            order_delivered_in_inchand=bool(decision.get("order_delivered_in_inchand")),
+            sandbox_auto_enabled=bool(
+                state.get("graph_tools_enabled") and cfg.agentic_graph_iran_post_verify_enabled
+            ),
+        ),
+    )
+    if not eval_result.sandbox_auto_allowed:
+        metadata = dict(state.get("graph_tool_metadata") or {})
+        blocked = dict(metadata.get("blocked_reasons") or {})
+        blocked[OperationalToolId.IRAN_POST_TRACKING_VERIFICATION.value] = (
+            eval_result.blocked_reason or "eligibility_blocked"
+        )
+        metadata["blocked_reasons"] = blocked
+        return {
+            "graph_tool_metadata": metadata,
+            "node_results": _append_node_result(
+                state,
+                node="execute_iran_post_tracking",
+                status="skipped",
+                summary="eligibility_blocked",
+            ),
+        }
+    result = verify_iran_post_tracking_code(tracking_code, settings=cfg)
+    safe = result.to_safe_dict()
+    metadata = dict(state.get("graph_tool_metadata") or {})
+    executed = list(metadata.get("executed_tools") or [])
+    executed.append(OperationalToolId.IRAN_POST_TRACKING_VERIFICATION.value)
+    metadata["executed_tools"] = executed
+    tool_results = dict(state.get("graph_tool_results") or {})
+    tool_results[OperationalToolId.IRAN_POST_TRACKING_VERIFICATION.value] = {
+        "verified": bool(safe.get("verified")),
+        "status_description": safe.get("status_description"),
+        "last_event_description": safe.get("last_event_description"),
+        "event_count": safe.get("event_count"),
+    }
+    return {
+        "iran_post_tracking_result": safe,
+        "graph_tool_metadata": metadata,
+        "graph_tool_results": tool_results,
+        "node_results": _append_node_result(
+            state,
+            node="execute_iran_post_tracking",
+            status="ok",
+            summary=f"verified={bool(safe.get('verified'))}",
+        ),
+    }
+
+
+def shipment_delivery_decision_after_tracking_node(state: dict[str, Any]) -> dict[str, Any]:
+    if state.get("multi_order_decision"):
+        return {
+            "node_results": _append_node_result(
+                state,
+                node="shipment_delivery_decision_after_tracking",
+                status="skipped",
+                summary="multi_order_already_decided",
+            ),
+        }
+    decision = _shipment_decision_from_state(state)
+    if decision is None:
+        return {
+            "node_results": _append_node_result(
+                state,
+                node="shipment_delivery_decision_after_tracking",
+                status="skipped",
+                summary="decision_unavailable",
+            ),
+        }
+    decision_sources = tuple(
+        str(item) for item in (decision.get("data_sources") or []) if str(item)
+    )
+    decision_used_lookup = "inchand_order_lookup" in decision_sources
+    tool_results = dict(state.get("graph_tool_results") or {})
+    tool_results["shipment_delivery_decision_after_tracking"] = {
+        "decision_type": decision.get("decision_type"),
+        "tracking_verification_status": decision.get("tracking_verification_status"),
+        "decision_used_order_lookup_result": decision_used_lookup,
+    }
+    return {
+        "shipment_delivery_decision": decision,
+        "shipment_delivery_decision_type": decision.get("decision_type"),
+        "grounded_decision_reply": decision.get("recommended_reply_fa"),
+        "order_delivered_in_inchand": bool(decision.get("order_delivered_in_inchand")),
+        "decision_used_order_lookup_result": decision_used_lookup,
+        "graph_tool_results": tool_results,
+        "node_results": _append_node_result(
+            state,
+            node="shipment_delivery_decision_after_tracking",
+            status="ok",
+            summary=f"type={decision.get('decision_type')}",
+        ),
+    }
+
+
 def generate_draft_node(
     state: dict[str, Any],
     *,
     settings: AppSettings | None = None,
 ) -> dict[str, Any]:
     """Internal first-turn draft generation with style + actionability post-processing."""
+    multi_meta = state.get("multi_turn_context_metadata") or {}
+    if isinstance(multi_meta, dict) and multi_meta.get("multi_turn_should_generate_draft") is False:
+        return {
+            **state,
+            "draft_reply": None,
+            "node_results": [
+                *list(state.get("node_results") or []),
+                {
+                    "node": "generate_draft",
+                    "status": "skipped",
+                    "summary": (
+                        f"draft_gating:{multi_meta.get('multi_turn_skip_reason') or 'unknown'}"
+                    ),
+                },
+            ],
+        }
     cfg = settings or get_settings()
     ticket = _ticket_from_state(state)
     full = (state.get("full_first_vendor_message_text") or "").strip()
@@ -406,6 +956,7 @@ def generate_draft_node(
     try:
         draft_provider_label = "mock"
         openai_meta: dict[str, Any] = {}
+        panel_metrics: dict[str, Any] = {}
 
         if provider == "mock" and generate_fn is None:
             entities = ctx.first_turn_entities
@@ -424,6 +975,7 @@ def generate_draft_node(
                     product_ids=product_ids,
                     tracking_code=tracking,
                     actionability=state.get("actionability"),
+                    shop_id=state.get("shop_id"),
                 ),
                 max_chars=max_chars,
             )
@@ -482,6 +1034,7 @@ def generate_draft_node(
             validation,
             seller_text=ctx.first_turn_text,
         )
+        raw_generated_draft = draft_text.strip()
         entities = ctx.first_turn_entities
         order_ids = tuple(entities.order_ids) if entities and entities.order_ids else ()
         product_ids = tuple(entities.product_ids) if entities and entities.product_ids else ()
@@ -504,6 +1057,17 @@ def generate_draft_node(
             product_ids=product_ids,
             tracking_code=tracking,
             conceptual_intent_fa=draft_result.conceptual_intent_fa,
+            shop_id=state.get("shop_id"),
+        )
+        draft_text, panel_metrics = apply_panel_issue_draft_calibration(
+            draft_text,
+            seller_text=ctx.first_turn_text,
+            detected_intent=ctx.first_turn_intent.detected_intent,
+            suggested_action=ctx.suggested_action,
+            conceptual_intent_fa=draft_result.conceptual_intent_fa,
+            order_ids=order_ids,
+            product_ids=product_ids,
+            shop_id=state.get("shop_id"),
         )
         draft_text, _photo_calibrated, _unnecessary_photo = calibrate_photo_evidence_wording(
             draft_text,
@@ -537,7 +1101,73 @@ def generate_draft_node(
             entity_warnings_summary=entity_warnings_summary,
         )
         draft_text = grounding.draft_reply
-        sufficiency_meta = operational_sufficiency_metrics_row(sufficiency)
+        draft_text, product_wording = apply_product_wording_calibration(
+            draft_text,
+            seller_text=ctx.first_turn_text,
+            detected_intent=ctx.first_turn_intent.detected_intent,
+            suggested_action=ctx.suggested_action,
+            conceptual_intent_fa=draft_result.conceptual_intent_fa,
+            draft_style=effective_style,
+            product_ids=product_ids,
+        )
+        sufficiency_meta = operational_sufficiency_metrics_row(
+            sufficiency,
+            panel_metrics=panel_metrics,
+        )
+        if product_wording.product_wording_normalized:
+            sufficiency_meta["product_wording_normalized"] = True
+        pre_reflection_draft = draft_text.strip()
+        multi_meta = state.get("multi_turn_context_metadata") or {}
+        if not isinstance(multi_meta, dict):
+            multi_meta = {}
+        reflection_seller_text = (
+            state.get("response_target_seller_text") or ctx.first_turn_text or ""
+        )
+        draft_text, reflection_result = apply_final_draft_reflection_review(
+            draft_text,
+            seller_text=reflection_seller_text,
+            detected_intent=ctx.first_turn_intent.detected_intent,
+            suggested_action=ctx.suggested_action,
+            conceptual_intent_fa=draft_result.conceptual_intent_fa,
+            draft_style=effective_style,
+            order_ids=order_ids,
+            product_ids=product_ids,
+            tracking_code=tracking,
+            extracted_iban=extracted_iban,
+            has_incomplete_iban_entity=has_incomplete_iban_entity,
+            entity_warnings_summary=entity_warnings_summary,
+            shop_id=state.get("shop_id"),
+            policy_hints=tuple(prompt_hints),
+            draft_provider=draft_provider_label,
+            pending_request_type=(
+                str(multi_meta.get("multi_turn_pending_request_type") or "").strip() or None
+            ),
+            pending_request_fulfilled=bool(
+                multi_meta.get("multi_turn_pending_request_fulfilled"),
+            ),
+            tracking_optional=bool(multi_meta.get("multi_turn_tracking_optional")),
+            context_order_ids=order_ids,
+            context_product_ids=product_ids,
+            context_tracking_codes=(tracking,) if tracking else (),
+            context_ibans=(extracted_iban,) if extracted_iban else (),
+            runtime_shop_identity_available=bool(
+                state.get("shop_identity_available")
+                or state.get("shop_id")
+                or state.get("seller_id")
+                or state.get("shop_name")
+            ),
+            runtime_shop_id_present=bool(state.get("shop_id")),
+            settings=cfg,
+        )
+        reflection_meta = reflection_metadata_row(reflection_result)
+        reflection_comparison = reflection_comparison_session_row(
+            raw_generated_draft=raw_generated_draft,
+            pre_reflection_draft=pre_reflection_draft,
+            final_reflected_draft=draft_text.strip(),
+            result=reflection_result,
+            reflection_enabled=cfg.final_draft_reflection_enabled,
+            reflection_provider=cfg.final_draft_reflection_provider,
+        )
         assert_draft_reply_safe(draft_text, max_chars=max_chars)
         apply_draft_style_checks(
             draft_text,
@@ -569,6 +1199,8 @@ def generate_draft_node(
             "detected_intent": ctx.first_turn_intent.detected_intent,
             "openai_draft_metrics": openai_meta or None,
             "operational_sufficiency_metrics": sufficiency_meta,
+            "final_draft_reflection_metrics": reflection_meta,
+            "final_draft_reflection_comparison": reflection_comparison,
             "node_results": _append_node_result(
                 state,
                 node="generate_draft",
@@ -579,7 +1211,7 @@ def generate_draft_node(
     except Exception as exc:  # noqa: BLE001
         errors = list(state.get("errors") or [])
         errors.append(f"generate_draft: {exc}")
-        return {
+        failure_update: dict[str, Any] = {
             "errors": errors,
             "node_results": _append_node_result(
                 state,
@@ -588,6 +1220,82 @@ def generate_draft_node(
                 summary=str(exc),
             ),
         }
+        existing_draft = state.get("draft_reply")
+        if isinstance(existing_draft, str) and existing_draft.strip():
+            draft_stripped = existing_draft.strip()
+            failure_result = FinalDraftReflectionResult(
+                original_draft=draft_stripped,
+                final_draft=draft_stripped,
+                reviewed=False,
+            )
+            failure_update["final_draft_reflection_metrics"] = reflection_metadata_row(
+                failure_result,
+            )
+            failure_update["final_draft_reflection_comparison"] = reflection_comparison_session_row(
+                raw_generated_draft=draft_stripped,
+                pre_reflection_draft=draft_stripped,
+                final_reflected_draft=draft_stripped,
+                result=failure_result,
+                reflection_enabled=cfg.final_draft_reflection_enabled,
+                reflection_provider=cfg.final_draft_reflection_provider,
+            )
+        return failure_update
+
+
+def grounded_reply_node(state: dict[str, Any]) -> dict[str, Any]:
+    """Prefer deterministic grounded reply when shipment decision requires override."""
+    decision = state.get("shipment_delivery_decision")
+    if not isinstance(decision, dict):
+        return {
+            "node_results": _append_node_result(
+                state,
+                node="grounded_reply",
+                status="skipped",
+                summary="no_shipment_decision",
+            ),
+        }
+    grounded = (decision.get("recommended_reply_fa") or "").strip()
+    should_override = bool(decision.get("should_override_draft")) and bool(grounded)
+    if not should_override:
+        return {
+            "tool_grounded_reply_used": False,
+            "node_results": _append_node_result(
+                state,
+                node="grounded_reply",
+                status="skipped",
+                summary="no_override",
+            ),
+        }
+    reflection_metrics = state.get("final_draft_reflection_metrics")
+    if not isinstance(reflection_metrics, dict):
+        reflection_metrics = {}
+    reflection_metrics = {
+        **reflection_metrics,
+        "grounded_reply_forced": True,
+    }
+    if state.get("multi_order_decision_type"):
+        reflection_metrics["multi_order_decision_type"] = state.get("multi_order_decision_type")
+        reflection_metrics["multi_order_reply_used"] = True
+    comparison = state.get("final_draft_reflection_comparison")
+    if isinstance(comparison, dict):
+        comparison = {
+            **comparison,
+            "final_reflected_draft": grounded,
+        }
+    return {
+        "draft_reply": grounded,
+        "grounded_decision_reply": grounded,
+        "tool_grounded_reply_used": True,
+        "multi_order_reply_used": bool(state.get("multi_order_decision")),
+        "final_draft_reflection_metrics": reflection_metrics,
+        "final_draft_reflection_comparison": comparison,
+        "node_results": _append_node_result(
+            state,
+            node="grounded_reply",
+            status="ok",
+            summary="grounded_reply_applied",
+        ),
+    }
 
 
 def safety_gate_node(state: dict[str, Any]) -> dict[str, Any]:
@@ -675,6 +1383,32 @@ def human_review_handoff_node(state: dict[str, Any]) -> dict[str, Any]:
         "entity_extraction_source_char_count": state.get("entity_extraction_source_char_count"),
         "display_preview_char_count": state.get("display_preview_char_count"),
         "first_turn_only": True,
+        "graph_tools_enabled": state.get("graph_tools_enabled"),
+        "graph_tool_metadata": state.get("graph_tool_metadata") or {},
+        "shipment_delivery_decision_type": state.get("shipment_delivery_decision_type"),
+        "multi_order_decision_type": state.get("multi_order_decision_type"),
+        "multi_order_reply_used": state.get("multi_order_reply_used"),
+        "multi_order_summary": state.get("multi_order_summary"),
+        "multi_order_decision": state.get("multi_order_decision"),
+        "decision_used_order_lookup_result": state.get("decision_used_order_lookup_result"),
+        "order_lookup_result_source": state.get("order_lookup_result_source"),
+        "order_lookup_auto_triggered": state.get("order_lookup_auto_triggered"),
+        "tool_grounded_reply_used": state.get("tool_grounded_reply_used"),
+        "order_lookup_found": (
+            (state.get("order_lookup_result") or {}).get("found")
+            if isinstance(state.get("order_lookup_result"), dict)
+            else None
+        ),
+        "order_delivered_in_inchand": (
+            (state.get("order_lookup_result") or {}).get("is_delivered_in_inchand")
+            if isinstance(state.get("order_lookup_result"), dict)
+            else None
+        ),
+        "iran_post_verified": (
+            (state.get("iran_post_tracking_result") or {}).get("verified")
+            if isinstance(state.get("iran_post_tracking_result"), dict)
+            else None
+        ),
     }
     _handoff_internal_only = frozenset(
         {

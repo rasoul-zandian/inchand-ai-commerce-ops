@@ -19,16 +19,23 @@ from app.evals.draft_evidence_wording_calibration import (
     PRODUCT_REVIEW_ACK,
     should_request_photo_file,
 )
+from app.evals.draft_product_wording_calibration import apply_product_wording_calibration
 from app.evals.offline_draft_generation import assert_draft_reply_safe
 from app.knowledge.policy_fact_extraction import (
+    COMMISSION_POLICY_FALLBACK_DRAFT_ANSWER,
+    SETTLEMENT_BANK_CANONICAL_DRAFT_ANSWER,
     SETTLEMENT_CANONICAL_DRAFT_ANSWER,
     build_sheba_issue_draft_response,
+    is_commission_policy_question,
     is_settlement_account_operational_request,
+    is_settlement_bank_policy_question,
     is_settlement_timing_policy_question,
 )
 from app.workflows.operational_information_sufficiency import (
+    build_panel_issue_response,
     detect_operational_scenario,
     is_delivery_completed_seller_message,
+    is_seller_panel_issue,
     is_shipment_seller_message,
     minimum_required_operational_entities,
     resolve_operational_order_ids,
@@ -60,6 +67,7 @@ class MockOperationalDraftInput:
     has_incomplete_iban_entity: bool = False
     entity_warnings_summary: str | None = None
     actionability: Mapping[str, Any] | None = None
+    shop_id: str | None = None
 
 
 def _normalize_token(value: str | None) -> str:
@@ -122,6 +130,18 @@ def _policy_answer_template(
     has_incomplete_iban_entity: bool = False,
     entity_warnings_summary: str | None = None,
 ) -> str | None:
+    if is_commission_policy_question(
+        seller_text,
+        detected_intent=intent,
+        suggested_action=action,
+    ):
+        return COMMISSION_POLICY_FALLBACK_DRAFT_ANSWER
+    if is_settlement_bank_policy_question(
+        seller_text,
+        detected_intent=intent,
+        suggested_action=action,
+    ):
+        return SETTLEMENT_BANK_CANONICAL_DRAFT_ANSWER
     if is_settlement_account_operational_request(
         seller_text,
         detected_intent=intent,
@@ -204,7 +224,7 @@ def _template_for_operational_case(
         if missing == ("order_id",):
             return "لطفاً شماره سفارش را ارسال کنید تا اطلاعات ارسال بررسی شود."
         if "tracking_code" in missing or "shipping_method" in missing:
-            return "ضمن تشکر، لطفاً نحوه ارسال و کد رهگیری مرسوله را ارسال فرمایید."
+            return "لطفاً روش ارسال و کد رهگیری پستی را در صورت وجود ارسال کنید."
         return "اطلاعات ارسال دریافت شد و در دست بررسی قرار گرفت."
 
     if is_delivery_completed_seller_message(seller_text):
@@ -216,8 +236,32 @@ def _template_for_operational_case(
         if not order_ids:
             return "لطفاً شماره سفارش را ارسال کنید تا اطلاعات ارسال بررسی شود."
         if not tracking_code:
-            return "ضمن تشکر، لطفاً نحوه ارسال و کد رهگیری مرسوله را ارسال فرمایید."
+            return "لطفاً روش ارسال و کد رهگیری پستی را در صورت وجود ارسال کنید."
         return "اطلاعات ارسال دریافت شد و در دست بررسی قرار گرفت."
+
+    if is_seller_panel_issue(
+        seller_text,
+        detected_intent=detected_intent,
+        suggested_action=suggested_action,
+        order_ids=tuple(order_ids),
+        product_ids=tuple(product_ids),
+    ):
+        return build_panel_issue_response()
+
+    normalized = seller_text.strip().lower()
+    if any(
+        marker in normalized
+        for marker in (
+            "اسم فروشگاه",
+            "نام فروشگاه",
+            "تغییر نام فروشگاه",
+            "profile",
+            "پروفایل فروشگاه",
+            "تنظیمات فروشگاه",
+            "اطلاعات فروشگاه",
+        )
+    ):
+        return "درخواست شما ثبت شد و در دست بررسی قرار گرفت."
 
     if is_settlement_account_operational_request(
         seller_text,
@@ -322,6 +366,19 @@ def generate_mock_operational_draft(
         suggested_action=inputs.suggested_action,
         conceptual_intent_fa=inputs.conceptual_intent_fa,
     )
+    if scenario == "panel_issue" or is_seller_panel_issue(
+        inputs.seller_text,
+        detected_intent=inputs.detected_intent,
+        suggested_action=inputs.suggested_action,
+        conceptual_intent_fa=inputs.conceptual_intent_fa,
+        order_ids=inputs.order_ids,
+        product_ids=inputs.product_ids,
+    ):
+        draft = build_panel_issue_response()
+        draft = _truncate_mock_draft(draft, max_chars=max_chars)
+        assert_draft_reply_safe(draft, max_chars=max_chars)
+        return draft
+
     sheba_kwargs = {
         "extracted_iban": inputs.extracted_iban,
         "has_incomplete_iban_entity": inputs.has_incomplete_iban_entity,
@@ -354,6 +411,14 @@ def generate_mock_operational_draft(
             **sheba_kwargs,
         )
 
+    draft, _product_wording = apply_product_wording_calibration(
+        draft,
+        seller_text=inputs.seller_text,
+        detected_intent=inputs.detected_intent,
+        suggested_action=inputs.suggested_action,
+        conceptual_intent_fa=inputs.conceptual_intent_fa,
+        product_ids=inputs.product_ids,
+    )
     draft = _truncate_mock_draft(draft, max_chars=max_chars)
     assert_draft_reply_safe(draft, max_chars=max_chars)
     if "خروجی آزمایشی" in draft:

@@ -1,0 +1,14 @@
+{
+  "scenario_id": "panel_access_issue_followup",
+  "draft_fingerprint": "731cf363e8093a4dd5e01f0198bd9a8c65d2bf9c6b653debec6baa253d22c3d8",
+  "detected_intent": "unknown",
+  "suggested_action": "monitor",
+  "reflection_rewrite_applied": false,
+  "should_generate_draft": null,
+  "policy_question_type": "none",
+  "reflection_issue_types": [],
+  "graph_status": "ok",
+  "eval_passed": true,
+  "skip_reason": null,
+  "updated_at_utc": "2026-05-26T14:04:21+00:00"
+}

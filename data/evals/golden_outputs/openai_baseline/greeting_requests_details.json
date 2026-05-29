@@ -1,0 +1,14 @@
+{
+  "scenario_id": "greeting_requests_details",
+  "draft_fingerprint": "0d447bb245901e495606f3259fa1e7f14b951711bcfd927db4b52a2c784f6f82",
+  "detected_intent": "unknown",
+  "suggested_action": "monitor",
+  "reflection_rewrite_applied": false,
+  "should_generate_draft": null,
+  "policy_question_type": "none",
+  "reflection_issue_types": [],
+  "graph_status": "ok",
+  "eval_passed": true,
+  "skip_reason": null,
+  "updated_at_utc": "2026-05-26T14:04:21+00:00"
+}

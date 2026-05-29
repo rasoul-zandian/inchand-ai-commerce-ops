@@ -1,0 +1,14 @@
+{
+  "scenario_id": "sheba_registration_issue_ack",
+  "draft_fingerprint": "6ee3b186bd33c32716123eddd19f0ceb0c1d50dbaa2d54f99c2d282e8cf6b2ae",
+  "detected_intent": "settlement_status_inquiry",
+  "suggested_action": "billing_review",
+  "reflection_rewrite_applied": false,
+  "should_generate_draft": null,
+  "policy_question_type": "none",
+  "reflection_issue_types": [],
+  "graph_status": "ok",
+  "eval_passed": true,
+  "skip_reason": null,
+  "updated_at_utc": "2026-05-26T14:04:21+00:00"
+}

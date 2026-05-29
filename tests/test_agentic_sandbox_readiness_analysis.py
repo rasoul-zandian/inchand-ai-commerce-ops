@@ -32,7 +32,13 @@ def _all_ok_nodes() -> dict[str, str]:
         "retrieve_knowledge_hints": "ok",
         "suggest_action": "ok",
         "validate_actionability": "ok",
+        "plan_read_only_tools": "ok",
+        "execute_order_lookup": "ok",
+        "shipment_delivery_decision": "ok",
+        "execute_iran_post_tracking": "ok",
+        "shipment_delivery_decision_after_tracking": "ok",
         "generate_draft": "ok",
+        "grounded_reply": "ok",
         "safety_gate": "ok",
         "human_review_handoff": "ok",
     }

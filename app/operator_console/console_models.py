@@ -76,6 +76,10 @@ class OperatorTicket:
     suggested_action_reason: str | None = None
     knowledge_hints: tuple[KnowledgeHint, ...] = field(default_factory=tuple)
     full_first_vendor_message_text: str | None = None
+    shop_id: str | None = None
+    seller_id: str | None = None
+    shop_name: str | None = None
+    shop_identity_available: bool | None = None
 
     def with_knowledge_hints(
         self,
@@ -137,6 +141,10 @@ class OperatorTicket:
             intent_related_document_types=_optional_str(
                 payload.get("intent_related_document_types"),
             ),
+            shop_id=_optional_str(payload.get("shop_id")),
+            seller_id=_optional_str(payload.get("seller_id")),
+            shop_name=_optional_str(payload.get("shop_name")),
+            shop_identity_available=_optional_bool(payload.get("shop_identity_available")),
         )
 
     @property

@@ -1,0 +1,18 @@
+cd /Users/rasoolzandian/inchand_ai                         
+source .venv/bin/activate                            
+  
+set -a
+source .env
+set +a
+
+MANUAL_SANDBOX_AUTO_TRACKING_VERIFY_ENABLED=true \
+MULTI_TURN_CONTEXT_ENABLED=true \
+OPERATOR_AGENTIC_ASSISTED_MODE_ENABLED=true \
+OPERATOR_AGENTIC_ASSISTED_PROVIDER=openai \
+OPERATOR_AGENTIC_ASSISTED_KNOWLEDGE_HINTS_ENABLED=true \
+FINAL_DRAFT_REFLECTION_ENABLED=true \
+FINAL_DRAFT_REFLECTION_PROVIDER=rule_based \
+PYTHONPATH=. python3.11 scripts/run_operator_console.py
+
+
+

@@ -1,0 +1,14 @@
+{
+  "scenario_id": "latest_support_only_thread",
+  "draft_fingerprint": null,
+  "detected_intent": null,
+  "suggested_action": null,
+  "reflection_rewrite_applied": false,
+  "should_generate_draft": false,
+  "policy_question_type": "none",
+  "reflection_issue_types": [],
+  "graph_status": "skipped",
+  "eval_passed": true,
+  "skip_reason": "latest_message_from_support",
+  "updated_at_utc": "2026-05-26T14:04:21+00:00"
+}
